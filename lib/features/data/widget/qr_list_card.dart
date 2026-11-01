@@ -35,7 +35,9 @@ class QrListCard extends StatelessWidget {
             ]),
             if (state.hasList) ...[
               SizedBox(height: 12.r),
-              const Pill('ACTIVE LIST', kind: PillKind.success, icon: Icons.check_circle_outline),
+              state.complete
+                  ? const Pill('COMPLETED', kind: PillKind.info, icon: Icons.task_alt)
+                  : const Pill('ACTIVE LIST', kind: PillKind.success, icon: Icons.check_circle_outline),
             ],
           ],
         ),

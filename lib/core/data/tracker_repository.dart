@@ -19,6 +19,7 @@ class TrackerRepository {
   late Box _scans;
   late Box _stock;
   late Box _printer;
+  late Box _archive;
   final _changes = StreamController<void>.broadcast();
 
   List<String> _codes = [];
@@ -36,6 +37,7 @@ class TrackerRepository {
   Map<String, Day> _dayMap = {};
   List<StockMove> _stockMoves = [];
   List<PrinterReading> _readings = [];
+  List<ArchivedList> _archived = [];
   Map<String, int> _index = {};
 
   Stream<void> get changes => _changes.stream;
@@ -72,6 +74,9 @@ class TrackerRepository {
 
   /// Oldest first.
   List<StockMove> get stockMoves => List.unmodifiable(_stockMoves);
+
+  /// Lists moved to the list history, newest first.
+  List<ArchivedList> get archivedLists => List.unmodifiable(_archived);
 
   ProgressStats get progress => ProgressStats.compute(codes: _codes, scans: _scanList, days: _dayMap.values, periodEnd: _periodEnd, defaultTarget: _defaultTarget);
 
@@ -127,6 +132,7 @@ class TrackerRepository {
     _scans = await Hive.openBox('scans');
     _stock = await Hive.openBox('stock');
     _printer = await Hive.openBox('printer');
+    _archive = await Hive.openBox('archive');
     await _migrateDays();
     _load();
   }
@@ -173,6 +179,7 @@ class TrackerRepository {
     _scanList = _scans.values.map((v) => Scan.fromMap(v as Map)).toList()..sort((a, b) => a.ts.compareTo(b.ts));
     _stockMoves = _stock.values.map((v) => StockMove.fromMap(v as Map)).toList()..sort((a, b) => a.ts.compareTo(b.ts));
     _readings = _printer.values.map((v) => PrinterReading.fromMap(v as Map)).toList();
+    _archived = _archive.values.map((v) => ArchivedList.fromMap(v as Map)).toList()..sort((a, b) => b.archivedAt.compareTo(a.archivedAt));
     _changes.add(null);
   }
 
@@ -203,6 +210,36 @@ class TrackerRepository {
       _scanList = [];
     }
     _setCodes(list, name, at);
+    _changes.add(null);
+  }
+
+  /// Moves the QR list and its scans to the list history, so the next list starts clean.
+  /// Daily log records stay in the log: stock and shipping totals count them.
+  Future<void> archiveList() async {
+    final at = DateTime.now().millisecondsSinceEpoch;
+    final from = _importedAt == null ? '' : ymd(DateTime.fromMillisecondsSinceEpoch(_importedAt!));
+    final entry = ArchivedList(
+      id: _newId(),
+      fileName: _fileName,
+      codeText: _codes.join('\n'),
+      total: _codes.length,
+      printed: progress.printed,
+      logged: _dayMap.values.where((d) => d.date.compareTo(from) >= 0).fold(0, (a, d) => a + (d.counter ?? 0)),
+      archivedAt: at,
+      importedAt: _importedAt,
+      scans: _scanList,
+    );
+    // stored before anything is removed, so a failure part way can't lose the list
+    await _archive.put(entry.id, entry.toMap());
+    await _kv.delete('codes');
+    await _scans.clear();
+    _archived = [entry, ..._archived];
+    _scanList = [];
+    _setCodes([], '', null);
+    // scan log positions belong to this list; the next list counts from its own start
+    for (final day in _entryMap.values.where((d) => d.scanPos != null).toList()) {
+      await saveDay(day.copyWith(scanPos: () => null));
+    }
     _changes.add(null);
   }
 
@@ -336,12 +373,13 @@ class TrackerRepository {
         'scans': _scanList.map((s) => s.toMap()).toList(),
         'stock': _stockMoves.map((m) => m.toMap()).toList(),
         'printer': _readings.map((p) => p.toMap()).toList(),
+        'archive': _archived.map((a) => a.toMap()).toList(),
       });
 
   Future<void> restore(String json) async {
     final data = jsonDecode(json);
     if (data is! Map || data['app'] != 'qr-tracker') throw const FormatException('This is not a QR Tracker backup file.');
-    await Future.wait([_kv.clear(), _days.clear(), _scans.clear(), _stock.clear(), _printer.clear()]);
+    await Future.wait([_kv.clear(), _days.clear(), _scans.clear(), _stock.clear(), _printer.clear(), _archive.clear()]);
     final c = data['codes'] as Map? ?? {};
     await _kv.put('codes', {'list': List<String>.from(c['list'] as List? ?? []), 'fileName': c['fileName'] ?? '', 'importedAt': c['importedAt']});
     final settings = data['settings'] as Map?;
@@ -363,11 +401,16 @@ class TrackerRepository {
       final reading = PrinterReading.fromMap(p as Map);
       await _printer.put(reading.id, reading.toMap());
     }
+    // backups from before the list history have no 'archive' key
+    for (final a in (data['archive'] as List? ?? [])) {
+      final list = ArchivedList.fromMap(a as Map);
+      await _archive.put(list.id, list.toMap());
+    }
     _load();
   }
 
   Future<void> resetAll() async {
-    await Future.wait([_kv.clear(), _days.clear(), _scans.clear(), _stock.clear(), _printer.clear()]);
+    await Future.wait([_kv.clear(), _days.clear(), _scans.clear(), _stock.clear(), _printer.clear(), _archive.clear()]);
     _load();
   }
 }

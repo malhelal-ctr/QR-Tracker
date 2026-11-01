@@ -11,6 +11,8 @@ Mobile app for tracking a laser QR printing machine. Android APK + web PWA from 
   machine counter (1 lid per printed code). Shows lids on hand (live, minus today's scanned printing),
   days of cover at the average daily use, whether stock covers the rest of the QR list, and a low-stock alert
 - **Data**: period end date, CSV export (log, scans, lid stock), full backup / restore (same format as the Ionic version)
+- **List history**: when a list is finished, archive it from Data. The list and its scans move to List history
+  (with CSV export of each), and the app is ready for the next file. Daily log records stay in the log
 
 All data stays on the device (Hive: files on Android, IndexedDB on web). Works offline.
 

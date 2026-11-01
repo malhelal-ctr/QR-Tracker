@@ -24,7 +24,7 @@ class ExportBackupCard extends StatelessWidget {
           Divider(indent: 16.r, endIndent: 16.r),
           ActionRow(icon: Icons.inventory_2_outlined, title: 'Lid stock (CSV)', subtitle: 'Deliveries, waste and stock counts', onTap: onExportStock),
           Divider(indent: 16.r, endIndent: 16.r),
-          ActionRow(icon: Icons.backup_outlined, title: 'Full backup', subtitle: 'QR list, log, scans and stock in one file (JSON)', onTap: onBackup),
+          ActionRow(icon: Icons.backup_outlined, title: 'Full backup', subtitle: 'QR list, list history, log, scans and stock in one file (JSON)', onTap: onBackup),
           Divider(indent: 16.r, endIndent: 16.r),
           ActionRow(
             icon: Icons.settings_backup_restore,

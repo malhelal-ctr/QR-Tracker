@@ -11,8 +11,10 @@ import 'package:qr_tracker/features/dashboard/widget/plan_card.dart';
 import 'package:qr_tracker/features/dashboard/widget/position_card.dart';
 import 'package:qr_tracker/features/dashboard/widget/stock_card.dart';
 import 'package:qr_tracker/features/dashboard/widget/today_card.dart';
+import 'package:qr_tracker/features/data/widget/archived_list_sheet.dart';
 import 'package:qr_tracker/features/data/widget/danger_zone_card.dart';
 import 'package:qr_tracker/features/data/widget/export_backup_card.dart';
+import 'package:qr_tracker/features/data/widget/list_history_card.dart';
 import 'package:widgetbook/widgetbook.dart';
 
 void _tap() {}
@@ -53,6 +55,21 @@ StockStats _stock(BuildContext context) => StockStats(
       shortfall: context.knobs.int.input(label: 'Shortfall', initialValue: 0),
       lowStock: context.knobs.intOrNull.input(label: 'Low stock alert', initialValue: 5000),
     );
+
+ArchivedList _archived(String fileName) {
+  final now = DateTime.now().millisecondsSinceEpoch;
+  return ArchivedList(
+    id: fileName,
+    fileName: fileName,
+    codeText: 'QR-1\nQR-2',
+    total: 50000,
+    printed: 49980,
+    logged: 50120,
+    archivedAt: now,
+    importedAt: now - 30 * 24 * 3600 * 1000,
+    scans: [Scan(ts: now, code: 'QR-49980', pos: 49980)],
+  );
+}
 
 final featureUseCases = <WidgetbookNode>[
   WidgetbookFolder(name: 'Dashboard', children: [
@@ -113,6 +130,19 @@ final featureUseCases = <WidgetbookNode>[
     ]),
   ]),
   WidgetbookFolder(name: 'Data', children: [
+    WidgetbookComponent(name: 'ListHistoryCard', useCases: [
+      WidgetbookUseCase(
+        name: 'Two lists',
+        builder: (context) => ListHistoryCard(lists: [_archived('batch_2026_10.xlsx'), _archived('batch_2026_09.xlsx')], onOpen: (_) {}),
+      ),
+      WidgetbookUseCase(name: 'Empty', builder: (context) => ListHistoryCard(lists: const [], onOpen: (_) {})),
+    ]),
+    WidgetbookComponent(name: 'ArchivedListSheet', useCases: [
+      WidgetbookUseCase(
+        name: 'Default',
+        builder: (context) => ArchivedListSheet(list: _archived('batch_2026_10.xlsx'), onExportCodes: _tap, onExportScans: _tap),
+      ),
+    ]),
     WidgetbookComponent(name: 'ExportBackupCard', useCases: [
       WidgetbookUseCase(
         name: 'Default',

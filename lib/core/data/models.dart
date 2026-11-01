@@ -12,6 +12,66 @@ class Scan {
   Map<String, dynamic> toMap() => {'ts': ts, 'code': code, 'pos': pos};
 }
 
+/// A finished QR list taken out of use, with its scans. Its daily log records stay in the log.
+class ArchivedList {
+  const ArchivedList({
+    required this.id,
+    required this.fileName,
+    required this.codeText,
+    required this.total,
+    required this.printed,
+    required this.logged,
+    required this.archivedAt,
+    this.importedAt,
+    this.scans = const [],
+  });
+
+  factory ArchivedList.fromMap(Map m) => ArchivedList(
+        id: m['id'] as String,
+        fileName: (m['fileName'] as String?) ?? '',
+        codeText: (m['codeText'] as String?) ?? '',
+        total: m['total'] as int,
+        printed: m['printed'] as int,
+        logged: m['logged'] as int,
+        archivedAt: m['archivedAt'] as int,
+        importedAt: m['importedAt'] as int?,
+        scans: [for (final s in (m['scans'] as List? ?? [])) Scan.fromMap(s as Map)],
+      );
+
+  /// Storage key.
+  final String id;
+  final String fileName;
+
+  /// The codes joined with newlines, so a big list is one string in memory, not one per code.
+  final String codeText;
+
+  /// Number of codes in the list.
+  final int total;
+
+  /// Print position reached (highest code scanned).
+  final int printed;
+
+  /// Daily log counters added up from the import date to the archive date.
+  final int logged;
+  final int archivedAt;
+  final int? importedAt;
+  final List<Scan> scans;
+
+  List<String> get codes => codeText.isEmpty ? const [] : codeText.split('\n');
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'fileName': fileName,
+        'codeText': codeText,
+        'total': total,
+        'printed': printed,
+        'logged': logged,
+        'archivedAt': archivedAt,
+        'importedAt': importedAt,
+        'scans': scans.map((s) => s.toMap()).toList(),
+      };
+}
+
 enum StockMoveType {
   /// Lids delivered (+).
   received,

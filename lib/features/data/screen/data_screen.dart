@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/data/models.dart';
 import '../../../core/data/tracker_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
@@ -10,9 +11,11 @@ import '../../../core/widgets/app_widgets.dart';
 import '../cubit/data_cubit.dart';
 import '../model/data_state.dart';
 import '../widget/action_row.dart';
+import '../widget/archived_list_sheet.dart';
 import '../widget/danger_zone_card.dart';
 import '../widget/export_backup_card.dart';
 import '../widget/import_sheet.dart';
+import '../widget/list_history_card.dart';
 import '../widget/period_card.dart';
 import '../widget/qr_list_card.dart';
 
@@ -60,6 +63,32 @@ class _DataView extends StatelessWidget {
         return null;
       });
 
+  /// Scans rarely hit the very last code, so a list can be archived before it shows as complete.
+  Future<void> _archive(BuildContext context, DataState state) => _run(context, () async {
+        final cubit = context.read<DataCubit>();
+        final reached = state.complete ? 'The list' : 'Scans have reached ${fmt(state.printed)} of ${fmt(state.codeCount)} codes. The list';
+        final message = '$reached and its ${fmt(state.scanCount)} scans move to List history, and the app waits for a new list. The daily log stays as it is.';
+        if (!await confirm(context, 'Archive this list?', message, 'Archive')) return null;
+        await cubit.archiveList();
+        return 'List moved to List history';
+      });
+
+  void _openArchived(BuildContext context, ArchivedList list) {
+    final cubit = context.read<DataCubit>();
+    String? saved(String? name) => name == null ? null : 'Saved $name';
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      constraints: BoxConstraints(maxWidth: 640.r),
+      builder: (_) => ArchivedListSheet(
+        list: list,
+        onExportCodes: () => _run(context, () async => saved(await cubit.exportArchivedCodes(list))),
+        onExportScans: () => _run(context, () async => saved(await cubit.exportArchivedScans(list))),
+      ),
+    );
+  }
+
   Future<void> _pickPeriodEnd(BuildContext context, DataState state) async {
     final cubit = context.read<DataCubit>();
     final d = await showDatePicker(
@@ -82,7 +111,7 @@ class _DataView extends StatelessWidget {
 
   Future<void> _erase(BuildContext context) async {
     final cubit = context.read<DataCubit>();
-    if (await confirm(context, 'Erase all data?', 'QR list, daily log, scans and lid stock will be deleted from this phone. Make a backup first.', 'Erase')) {
+    if (await confirm(context, 'Erase all data?', 'QR list, list history, daily log, scans and lid stock will be deleted from this phone. Make a backup first.', 'Erase')) {
       await cubit.eraseAll();
     }
   }
@@ -100,6 +129,18 @@ class _DataView extends StatelessWidget {
           left: [
             SectionTitle('QR list', icon: Icons.qr_code_2, upper: true, trailing: MicroLabel('${fmt(state.scanCount)} scans')),
             QrListCard(state: state),
+            if (state.hasList) ...[
+              ActionRow(
+                icon: Icons.archive_outlined,
+                iconBg: state.complete ? C.primaryContainer : C.high,
+                iconColor: state.complete ? Colors.white : C.primary,
+                title: 'Archive this list',
+                subtitle: state.complete ? 'Finished: move it and its scans to List history' : '${fmt(state.codeCount - state.printed)} codes left by scans. Move it to List history when done',
+                onTap: () => _archive(context, state),
+                standalone: true,
+              ),
+              SizedBox(height: 12.r),
+            ],
             ActionRow(
               icon: Icons.cloud_upload_outlined,
               iconBg: C.primaryContainer,
@@ -113,6 +154,9 @@ class _DataView extends StatelessWidget {
             SizedBox(height: 8.r),
             const SectionTitle('Period', icon: Icons.calendar_month_outlined, upper: true),
             PeriodCard(state: state, onPick: () => _pickPeriodEnd(context, state), onClear: () => cubit.setPeriodEnd(null)),
+            SizedBox(height: 8.r),
+            SectionTitle('List history', icon: Icons.history, upper: true, trailing: MicroLabel('${fmt(state.archived.length)} lists')),
+            ListHistoryCard(lists: state.archived, onOpen: (list) => _openArchived(context, list)),
           ],
           right: [
             const SectionTitle('Export & backup', icon: Icons.inventory_2_outlined, upper: true),

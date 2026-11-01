@@ -94,7 +94,7 @@ final coreUseCases = <WidgetbookNode>[
     WidgetbookUseCase(
       name: 'Pair',
       builder: (context) => const Pair(
-        Metric(label: 'Done', icon: Icons.check_circle_outline, value: '64%', caption: '32,000 printed'),
+        Metric(label: 'Done', icon: Icons.check_circle_outline, value: '32,000', caption: '64.0% of 50,000'),
         Metric(label: 'Remaining', icon: Icons.pending_actions, value: '18,000', caption: '36% of list'),
       ),
     ),

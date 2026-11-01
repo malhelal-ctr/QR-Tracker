@@ -38,6 +38,8 @@ class DataCubit extends Cubit<DataState> with RepositoryListener {
     return preview.codes.length;
   }
 
+  Future<void> archiveList() => _repository.archiveList();
+
   Future<void> setPeriodEnd(DateTime? date) => _repository.setPeriodEnd(date == null ? '' : ymd(date));
 
   /// Each export returns the saved file name, or null if the user cancelled.
@@ -55,17 +57,26 @@ class DataCubit extends Cubit<DataState> with RepositoryListener {
     );
   }
 
-  Future<String?> exportScans() {
-    final total = _repository.codes.length;
-    return _save(
-      'qr-scans-${ymd(DateTime.now())}.csv',
-      toCsv([
+  Future<String?> exportScans() => _save('qr-scans-${ymd(DateTime.now())}.csv', _scansCsv(_repository.scans, _repository.codes.length), 'text/csv');
+
+  /// The codes of an archived list, in print order.
+  Future<String?> exportArchivedCodes(ArchivedList list) => _save(
+        'qr-archive-${_stamp(list)}-codes.csv',
+        toCsv([
+          ['Position', 'Code'],
+          for (final (i, code) in list.codes.indexed) [i + 1, code],
+        ]),
+        'text/csv',
+      );
+
+  Future<String?> exportArchivedScans(ArchivedList list) => _save('qr-archive-${_stamp(list)}-scans.csv', _scansCsv(list.scans, list.total), 'text/csv');
+
+  String _stamp(ArchivedList list) => ymd(DateTime.fromMillisecondsSinceEpoch(list.archivedAt));
+
+  String _scansCsv(List<Scan> scans, int total) => toCsv([
         ['Date time', 'Code', 'Position', 'Of total'],
-        for (final s in _repository.scans) [DateTime.fromMillisecondsSinceEpoch(s.ts).toString().substring(0, 19), s.code, s.pos ?? 'NOT IN LIST', total],
-      ]),
-      'text/csv',
-    );
-  }
+        for (final s in scans) [DateTime.fromMillisecondsSinceEpoch(s.ts).toString().substring(0, 19), s.code, s.pos ?? 'NOT IN LIST', total],
+      ]);
 
   Future<String?> exportStock() => _save(
         'qr-lid-stock-${ymd(DateTime.now())}.csv',

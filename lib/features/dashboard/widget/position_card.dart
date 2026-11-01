@@ -47,7 +47,7 @@ class PositionCard extends StatelessWidget {
           Meter(s.total == 0 ? 0 : s.printed / s.total),
           SizedBox(height: 16.r),
           Pair(
-            Metric(label: 'Done', icon: Icons.check_circle_outline, value: fmtPct(s.printed, s.total), caption: '${fmt(s.printed)} printed'),
+            Metric(label: 'Done', icon: Icons.check_circle_outline, value: fmt(s.printed), caption: '${fmtPct(s.printed, s.total)} of ${fmt(s.total)}'),
             Metric(label: 'Remaining', icon: Icons.pending_actions, value: fmt(s.remaining), caption: '${fmtPct(s.remaining, s.total)} of list'),
           ),
           SizedBox(height: 14.r),

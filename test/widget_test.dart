@@ -14,6 +14,7 @@ import 'package:qr_tracker/core/data/stock_stats.dart';
 import 'package:qr_tracker/core/data/tracker_repository.dart';
 import 'package:qr_tracker/core/utils/camera_probe.dart';
 import 'package:qr_tracker/core/utils/file_io.dart';
+import 'package:qr_tracker/core/utils/format.dart';
 import 'package:qr_tracker/core/utils/period.dart';
 import 'package:qr_tracker/features/dashboard/model/production_summary.dart';
 import 'package:qr_tracker/features/daily_log/model/daily_log_state.dart';
@@ -387,6 +388,63 @@ void main() {
     expect(repo.printerHistory, isEmpty);
     await repo.restore(backup);
     expect(repo.printerHistory.single.reading.value, 1000000);
+  });
+
+  test('TrackerRepository: archiving moves the list and scans to history and keeps the daily log', () async {
+    final dir = await Directory.systemTemp.createTemp('qr_tracker_archive');
+    addTearDown(() async {
+      await Hive.close();
+      await dir.delete(recursive: true);
+    });
+    final repo = TrackerRepository();
+    await repo.init(path: dir.path);
+    final today = ymd(DateTime.now());
+    await repo.importCodes(['A1', 'A2', 'A3'], 'batch-1.xlsx', clearScans: true);
+    await repo.addScan('A3');
+    await repo.addScan('stray');
+    await repo.saveDay(Day(date: today, counter: 3, scanPos: 3, note: 'done'));
+    await repo.saveDay(const Day(date: '2020-01-01', counter: 999)); // before the import: not this list's
+    await repo.addStockMove(StockMoveType.count, 5000, DateTime.now());
+
+    await repo.archiveList();
+
+    expect(repo.codes, isEmpty);
+    expect(repo.scans, isEmpty);
+    expect((repo.fileName, repo.importedAt), ('', null));
+    final list = repo.archivedLists.single;
+    expect((list.fileName, list.total, list.printed, list.logged), ('batch-1.xlsx', 3, 3, 3));
+    expect(list.codes, ['A1', 'A2', 'A3']);
+    expect(list.scans.map((s) => (s.code, s.pos)), [('A3', 3), ('stray', null)]);
+
+    // the log and stock stay; only the scan position, which belonged to the old list, is cleared
+    final day = repo.days[today]!;
+    expect((day.counter, day.note, day.scanPos), (3, 'done', null));
+    expect(repo.days['2020-01-01']!.counter, 999);
+    expect(repo.stockMoves.length, 1);
+
+    // the next list's Log by scan counts from its own start
+    await repo.importCodes(['B1', 'B2'], 'batch-2.xlsx', clearScans: true);
+    expect(repo.scanBaselineFor(ymd(DateTime.now().add(const Duration(days: 1)))).source, BaselineSource.listStart);
+    expect(repo.progress.printed, 0);
+    await repo.archiveList();
+    expect(repo.archivedLists.map((a) => a.fileName), ['batch-2.xlsx', 'batch-1.xlsx']);
+
+    // kept across an app restart and in backups
+    await Hive.close();
+    final reopened = TrackerRepository();
+    await reopened.init(path: dir.path);
+    expect(reopened.archivedLists.last.scans.length, 2);
+    final backup = reopened.backupJson();
+    await reopened.resetAll();
+    expect(reopened.archivedLists, isEmpty);
+    await reopened.restore(backup);
+    expect(reopened.archivedLists.map((a) => a.fileName), ['batch-2.xlsx', 'batch-1.xlsx']);
+    expect(reopened.archivedLists.last.codes, ['A1', 'A2', 'A3']);
+
+    // backups from before the list history still restore
+    final old = jsonDecode(backup) as Map..remove('archive');
+    await reopened.restore(jsonEncode(old));
+    expect(reopened.archivedLists, isEmpty);
   });
 
   group('cameraIssues', () {

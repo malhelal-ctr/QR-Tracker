@@ -21,7 +21,7 @@ class DangerZoneCard extends StatelessWidget {
                 children: [
                   Text('Erase all data', style: sans(21, weight: FontWeight.w700, color: C.danger)),
                   SizedBox(height: 2.r),
-                  Text('Deletes the QR list, scans, daily log and stock from this phone.', style: sans(14, color: C.onVariant)),
+                  Text('Deletes the QR list, list history, scans, daily log and stock from this phone.', style: sans(14, color: C.onVariant)),
                 ],
               ),
             ),
