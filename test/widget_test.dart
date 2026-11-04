@@ -549,8 +549,12 @@ void main() {
     expect(repo.positionOf(' LT-2026-000002 '), 2);
     expect(repo.positionOf('LT-2026-000003'), 3); // dashes typed where the list has none
     expect(repo.positionOf('LT2026000009'), isNull);
+    expect(repo.positionOf('lt-2026-000001'), 1); // case is ignored too
+    expect(repo.positionOf('Lt2026000003'), 3);
+    expect(repo.positionOf('LT 2026 000001'), 1); // spaces inside the code too
+    expect(repo.positionOf('lt - 2026 - 000002'), 2);
 
-    final scan = await repo.addScan('LT2026000002');
+    final scan = await repo.addScan('lt2026000002');
     expect((scan.code, scan.pos), ('LT-2026-000002', 2));
     final stray = await repo.addScan(' XX-1 ');
     expect((stray.code, stray.pos), ('XX-1', null));

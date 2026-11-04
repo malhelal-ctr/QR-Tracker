@@ -45,7 +45,7 @@ class _ManualEntryState extends State<ManualEntry> {
                   onSubmitted: (_) => _submit(),
                   // keep the keyboard open so several codes can be typed in a row
                   onEditingComplete: () {},
-                  decoration: const InputDecoration(hintText: 'e.g. LT2026012450 (dashes optional)', prefixIcon: Icon(Icons.keyboard_outlined)),
+                  decoration: const InputDecoration(hintText: 'e.g. lt2026012450 (no dashes or spaces needed)', prefixIcon: Icon(Icons.keyboard_outlined)),
                 ),
               ),
               SizedBox(width: 10.r),

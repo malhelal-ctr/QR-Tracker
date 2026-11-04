@@ -117,8 +117,8 @@ class TrackerRepository {
   /// 1-based print position of [code] in the imported list, null when it is not in it.
   int? positionOf(String code) => _index[_key(code)];
 
-  /// Codes are matched without dashes, so `LT2026012450` finds `LT-2026-012450`.
-  static String _key(String code) => code.trim().replaceAll('-', '');
+  /// Codes are matched without dashes or spaces and ignoring case, so `lt 2026012450` finds `LT-2026-012450`.
+  static String _key(String code) => code.replaceAll(RegExp(r'[-\s]'), '').toUpperCase();
 
   /// [code] as written in the list when it is in it, else as typed.
   String _listCode(String code, int? pos) => pos == null ? code.trim() : _codes[pos - 1];
