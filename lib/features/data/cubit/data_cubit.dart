@@ -34,11 +34,15 @@ class DataCubit extends Cubit<DataState> with RepositoryListener {
 
   /// Returns the number of codes imported.
   Future<int> importCodes(ImportPreview preview) async {
-    await _repository.importCodes(preview.codes, preview.fileName, clearScans: preview.clearScans || !state.hasList);
+    await _repository.importCodes(preview.codes, preview.fileName, clearScans: preview.clearScans || !state.hasList, product: preview.product.trim());
     return preview.codes.length;
   }
 
   Future<void> archiveList() => _repository.archiveList();
+
+  Future<void> setProduct(String value) => _repository.setProduct(value);
+
+  Future<void> setArchivedProduct(String id, String value) => _repository.setArchivedProduct(id, value);
 
   Future<void> setPeriodEnd(DateTime? date) => _repository.setPeriodEnd(date == null ? '' : ymd(date));
 
@@ -48,34 +52,34 @@ class DataCubit extends Cubit<DataState> with RepositoryListener {
     return _save(
       'qr-daily-log-${ymd(DateTime.now())}.csv',
       toCsv([
-        ['Date', 'Target', 'Printed (counter)', 'Difference', 'Shipped', 'Note'],
+        ['Date', 'Target', 'Printed (counter)', 'Difference', 'Shipped', 'Note', 'Product'],
         for (final d in days)
           if (_repository.targetFor(d) case final target)
-            [d.date, target, d.counter, d.counter != null && target != null ? d.counter! - target : '', d.shipped, d.note],
+            [d.date, target, d.counter, d.counter != null && target != null ? d.counter! - target : '', d.shipped, d.note, d.product],
       ]),
       'text/csv',
     );
   }
 
-  Future<String?> exportScans() => _save('qr-scans-${ymd(DateTime.now())}.csv', _scansCsv(_repository.scans, _repository.codes.length), 'text/csv');
+  Future<String?> exportScans() => _save('qr-scans-${ymd(DateTime.now())}.csv', _scansCsv(_repository.scans, _repository.codes.length, _repository.product), 'text/csv');
 
   /// The codes of an archived list, in print order.
   Future<String?> exportArchivedCodes(ArchivedList list) => _save(
         'qr-archive-${_stamp(list)}-codes.csv',
         toCsv([
-          ['Position', 'Code'],
-          for (final (i, code) in list.codes.indexed) [i + 1, code],
+          ['Position', 'Code', 'Product'],
+          for (final (i, code) in list.codes.indexed) [i + 1, code, list.product],
         ]),
         'text/csv',
       );
 
-  Future<String?> exportArchivedScans(ArchivedList list) => _save('qr-archive-${_stamp(list)}-scans.csv', _scansCsv(list.scans, list.total), 'text/csv');
+  Future<String?> exportArchivedScans(ArchivedList list) => _save('qr-archive-${_stamp(list)}-scans.csv', _scansCsv(list.scans, list.total, list.product), 'text/csv');
 
   String _stamp(ArchivedList list) => ymd(DateTime.fromMillisecondsSinceEpoch(list.archivedAt));
 
-  String _scansCsv(List<Scan> scans, int total) => toCsv([
-        ['Date time', 'Code', 'Position', 'Of total'],
-        for (final s in scans) [DateTime.fromMillisecondsSinceEpoch(s.ts).toString().substring(0, 19), s.code, s.pos ?? 'NOT IN LIST', total],
+  String _scansCsv(List<Scan> scans, int total, String product) => toCsv([
+        ['Date time', 'Code', 'Position', 'Of total', 'Product'],
+        for (final s in scans) [DateTime.fromMillisecondsSinceEpoch(s.ts).toString().substring(0, 19), s.code, s.pos ?? 'NOT IN LIST', total, product],
       ]);
 
   Future<String?> exportStock() => _save(

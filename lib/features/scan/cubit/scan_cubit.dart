@@ -36,6 +36,7 @@ class ScanCubit extends Cubit<ScanState> with RepositoryListener {
         total: _repository.codes.length,
         previous: previous,
         nextCode: scan.pos == null ? null : _repository.codeAfter(scan.pos!),
+        product: _repository.product,
       );
       if (!isClosed) emit(state.copyWith(result: () => result, sessionCount: state.sessionCount + 1));
     } finally {

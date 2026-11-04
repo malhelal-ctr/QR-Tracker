@@ -4,14 +4,18 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
 import '../../../core/utils/responsive.dart';
 import '../../../core/widgets/app_widgets.dart';
+import '../../../core/widgets/product_field.dart';
 import '../model/import_preview.dart';
 
 /// Bottom sheet showing the picked file before import. Pops with true once imported.
 class ImportSheet extends StatefulWidget {
-  const ImportSheet({super.key, required this.preview, required this.hasExistingList, required this.onImport});
+  const ImportSheet({super.key, required this.preview, required this.hasExistingList, required this.onImport, this.products = const []});
 
   final ImportPreview preview;
   final bool hasExistingList;
+
+  /// Products used so far, to pick from.
+  final List<String> products;
   final Future<void> Function(ImportPreview preview) onImport;
 
   @override
@@ -30,7 +34,8 @@ class _ImportSheetState extends State<ImportSheet> {
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.88),
         child: SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(16.r, 0.r, 16.r, 16.r),
+          // the keyboard opens over the sheet for the product name
+          padding: EdgeInsets.fromLTRB(16.r, 0.r, 16.r, 16.r + MediaQuery.viewInsetsOf(context).bottom),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -55,6 +60,8 @@ class _ImportSheetState extends State<ImportSheet> {
                   ),
                 ]),
               ),
+              SizedBox(height: 12.r),
+              ProductField(label: 'Product group', products: widget.products, onChanged: (v) => setState(() => _preview = _preview.copyWith(product: v))),
               SizedBox(height: 12.r),
               _CheckTile(
                 value: _preview.hasHeader,
@@ -102,7 +109,7 @@ class _ImportSheetState extends State<ImportSheet> {
                   child: BigButton(
                     label: 'Import (${fmt(list.length)})',
                     icon: Icons.download_done,
-                    onPressed: list.isEmpty
+                    onPressed: list.isEmpty || _preview.product.trim().isEmpty
                         ? null
                         : () async {
                             await widget.onImport(_preview);

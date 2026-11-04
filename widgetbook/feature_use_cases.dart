@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:qr_tracker/core/data/models.dart';
+import 'package:qr_tracker/core/data/product_stats.dart';
 import 'package:qr_tracker/core/data/progress_stats.dart';
 import 'package:qr_tracker/core/data/stock_stats.dart';
 import 'package:qr_tracker/features/daily_log/model/daily_log_state.dart';
@@ -15,6 +16,7 @@ import 'package:qr_tracker/features/data/widget/archived_list_sheet.dart';
 import 'package:qr_tracker/features/data/widget/danger_zone_card.dart';
 import 'package:qr_tracker/features/data/widget/export_backup_card.dart';
 import 'package:qr_tracker/features/data/widget/list_history_card.dart';
+import 'package:qr_tracker/features/products/widget/product_row.dart';
 import 'package:widgetbook/widgetbook.dart';
 
 void _tap() {}
@@ -56,7 +58,7 @@ StockStats _stock(BuildContext context) => StockStats(
       lowStock: context.knobs.intOrNull.input(label: 'Low stock alert', initialValue: 5000),
     );
 
-ArchivedList _archived(String fileName) {
+ArchivedList _archived(String fileName, [String product = 'Cover Coat']) {
   final now = DateTime.now().millisecondsSinceEpoch;
   return ArchivedList(
     id: fileName,
@@ -68,6 +70,7 @@ ArchivedList _archived(String fileName) {
     archivedAt: now,
     importedAt: now - 30 * 24 * 3600 * 1000,
     scans: [Scan(ts: now, code: 'QR-49980', pos: 49980)],
+    product: product,
   );
 }
 
@@ -129,18 +132,37 @@ final featureUseCases = <WidgetbookNode>[
       ),
     ]),
   ]),
+  WidgetbookFolder(name: 'Products', children: [
+    WidgetbookComponent(name: 'ProductRow', useCases: [
+      WidgetbookUseCase(
+        name: 'In use',
+        builder: (context) => const ProductRow(
+          stats: ProductStats(name: 'Cover Coat', lists: 3, codes: 150000, days: 21, printed: 148200, active: true),
+          onRename: _tap,
+          onDelete: _tap,
+        ),
+      ),
+      WidgetbookUseCase(
+        name: 'Unused',
+        builder: (context) => const ProductRow(stats: ProductStats(name: 'All Purpose Joint'), onRename: _tap, onDelete: _tap),
+      ),
+    ]),
+  ]),
   WidgetbookFolder(name: 'Data', children: [
     WidgetbookComponent(name: 'ListHistoryCard', useCases: [
       WidgetbookUseCase(
-        name: 'Two lists',
-        builder: (context) => ListHistoryCard(lists: [_archived('batch_2026_10.xlsx'), _archived('batch_2026_09.xlsx')], onOpen: (_) {}),
+        name: 'Grouped by product',
+        builder: (context) => ListHistoryCard(
+          lists: [_archived('Nov_1_2026_qr_serials.xlsx', 'All Purpose Joint'), _archived('Oct_31_2026_qr_serials.xlsx'), _archived('Oct_12_2026_qr_serials.xlsx'), _archived('Sep_2_2026_qr_serials.xlsx', '')],
+          onOpen: (_) {},
+        ),
       ),
       WidgetbookUseCase(name: 'Empty', builder: (context) => ListHistoryCard(lists: const [], onOpen: (_) {})),
     ]),
     WidgetbookComponent(name: 'ArchivedListSheet', useCases: [
       WidgetbookUseCase(
         name: 'Default',
-        builder: (context) => ArchivedListSheet(list: _archived('batch_2026_10.xlsx'), onExportCodes: _tap, onExportScans: _tap),
+        builder: (context) => ArchivedListSheet(list: _archived('Oct_31_2026_qr_serials.xlsx'), onEditProduct: _tap, onExportCodes: _tap, onExportScans: _tap),
       ),
     ]),
     WidgetbookComponent(name: 'ExportBackupCard', useCases: [

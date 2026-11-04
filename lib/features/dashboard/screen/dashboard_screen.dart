@@ -38,7 +38,7 @@ class _DashboardView extends StatelessWidget {
         builder: (context, state) => TwoPane(
           left: [
             if (state.hasCodes)
-              PositionCard(stats: state.stats, fileName: state.fileName, onScan: () => go(AppTab.scan))
+              PositionCard(stats: state.stats, fileName: state.fileName, product: state.product, onScan: () => go(AppTab.scan))
             else
               EmptyListCard(onImport: () => go(AppTab.data)),
             SummaryCard(

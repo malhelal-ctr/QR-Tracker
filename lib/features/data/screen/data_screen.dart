@@ -8,6 +8,8 @@ import '../../../core/utils/format.dart';
 import '../../../core/utils/responsive.dart';
 import '../../../core/widgets/adaptive_layout.dart';
 import '../../../core/widgets/app_widgets.dart';
+import '../../../core/widgets/product_field.dart';
+import '../../products/screen/products_screen.dart';
 import '../cubit/data_cubit.dart';
 import '../model/data_state.dart';
 import '../widget/action_row.dart';
@@ -54,6 +56,7 @@ class _DataView extends StatelessWidget {
           builder: (_) => ImportSheet(
             preview: preview,
             hasExistingList: cubit.state.hasList,
+            products: cubit.state.products,
             onImport: (p) async {
               final count = await cubit.importCodes(p);
               if (context.mounted) showSnack(context, 'Imported ${fmt(count)} codes');
@@ -73,6 +76,12 @@ class _DataView extends StatelessWidget {
         return 'List moved to List history';
       });
 
+  Future<void> _editProduct(BuildContext context, DataState state) async {
+    final cubit = context.read<DataCubit>();
+    final product = await showProductDialog(context, current: state.product, products: state.products);
+    if (product != null) await cubit.setProduct(product);
+  }
+
   void _openArchived(BuildContext context, ArchivedList list) {
     final cubit = context.read<DataCubit>();
     String? saved(String? name) => name == null ? null : 'Saved $name';
@@ -81,8 +90,13 @@ class _DataView extends StatelessWidget {
       isScrollControlled: true,
       showDragHandle: true,
       constraints: BoxConstraints(maxWidth: 640.r),
-      builder: (_) => ArchivedListSheet(
+      builder: (sheet) => ArchivedListSheet(
         list: list,
+        onEditProduct: () async {
+          Navigator.pop(sheet);
+          final product = await showProductDialog(context, current: list.product, products: cubit.state.products);
+          if (product != null) await cubit.setArchivedProduct(list.id, product);
+        },
         onExportCodes: () => _run(context, () async => saved(await cubit.exportArchivedCodes(list))),
         onExportScans: () => _run(context, () async => saved(await cubit.exportArchivedScans(list))),
       ),
@@ -128,7 +142,7 @@ class _DataView extends StatelessWidget {
         builder: (context, state) => TwoPane(
           left: [
             SectionTitle('QR list', icon: Icons.qr_code_2, upper: true, trailing: MicroLabel('${fmt(state.scanCount)} scans')),
-            QrListCard(state: state),
+            QrListCard(state: state, onEditProduct: () => _editProduct(context, state)),
             if (state.hasList) ...[
               ActionRow(
                 icon: Icons.archive_outlined,
@@ -149,6 +163,15 @@ class _DataView extends StatelessWidget {
               subtitle: '.csv, .txt or .xlsx — one column, in print order',
               busy: state.busy,
               onTap: state.busy ? null : () => _import(context),
+              standalone: true,
+            ),
+            SizedBox(height: 8.r),
+            const SectionTitle('Products', icon: Icons.sell_outlined, upper: true),
+            ActionRow(
+              icon: Icons.category_outlined,
+              title: 'Manage products',
+              subtitle: '${fmt(state.products.length)} products: add, rename and see totals',
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ProductsScreen())),
               standalone: true,
             ),
             SizedBox(height: 8.r),

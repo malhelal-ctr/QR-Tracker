@@ -2,10 +2,13 @@ import '../../../core/data/models.dart';
 
 /// Outcome of one scan (camera or typed).
 class ScanResult {
-  const ScanResult({required this.scan, required this.total, this.previous, this.nextCode});
+  const ScanResult({required this.scan, required this.total, this.previous, this.nextCode, this.product = ''});
 
   final Scan scan;
   final int total;
+
+  /// Product of the active list; empty when none was set.
+  final String product;
 
   /// Scan of the highest code before this one.
   final Scan? previous;

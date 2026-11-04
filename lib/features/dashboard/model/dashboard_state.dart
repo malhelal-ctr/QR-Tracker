@@ -12,12 +12,14 @@ class DashboardState {
     required this.stock,
     required this.summary,
     required this.preset,
+    this.product = '',
   });
 
   factory DashboardState.from(TrackerRepository repository, {required PeriodPreset preset, required DateTime from, required DateTime to}) =>
       DashboardState(
         hasCodes: repository.codes.isNotEmpty,
         fileName: repository.fileName,
+        product: repository.product,
         stats: repository.progress,
         stock: repository.stock,
         summary: ProductionSummary.compute(days: repository.days.values, defaultTarget: repository.defaultTarget, from: from, to: to),
@@ -26,6 +28,7 @@ class DashboardState {
 
   final bool hasCodes;
   final String fileName;
+  final String product;
   final ProgressStats stats;
   final StockStats stock;
 

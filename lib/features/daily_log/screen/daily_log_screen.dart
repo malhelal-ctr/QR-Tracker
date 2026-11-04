@@ -12,6 +12,7 @@ import '../../../core/widgets/date_row.dart';
 import '../../../core/widgets/field_label.dart';
 import '../../../core/widgets/history_header.dart';
 import '../../../core/widgets/period_chips.dart';
+import '../../../core/widgets/product_field.dart';
 import '../../../core/widgets/stepper_field.dart';
 import '../cubit/daily_log_cubit.dart';
 import '../model/daily_log_state.dart';
@@ -184,6 +185,14 @@ class _DailyLogViewState extends State<_DailyLogView> {
                 onTap: () async {
                   final d = await _pickDate(state.date);
                   if (d != null) cubit.setDate(d);
+                },
+              ),
+              SizedBox(height: 12.r),
+              ProductTile(
+                product: state.product,
+                onTap: () async {
+                  final product = await showProductDialog(context, current: state.product, products: state.products);
+                  if (product != null) cubit.setProduct(product);
                 },
               ),
               SizedBox(height: 16.r),

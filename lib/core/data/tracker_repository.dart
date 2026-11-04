@@ -6,6 +6,7 @@ import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 import '../utils/format.dart';
 import 'models.dart';
 import 'printer_stats.dart';
+import 'product_stats.dart';
 import 'progress_stats.dart';
 import 'scan_log.dart';
 import 'shipping_stats.dart';
@@ -24,12 +25,14 @@ class TrackerRepository {
 
   List<String> _codes = [];
   String _fileName = '';
+  String _product = '';
   int? _importedAt;
   String _periodEnd = '';
   int? _lowStock;
   int? _defaultTarget;
   int? _shipStartQty;
   String _shipStartDate = '';
+  List<String> _productNames = [];
   List<Scan> _scanList = [];
 
   /// Log records by id, and the same records merged into one per date.
@@ -43,6 +46,9 @@ class TrackerRepository {
   Stream<void> get changes => _changes.stream;
   List<String> get codes => List.unmodifiable(_codes);
   String get fileName => _fileName;
+
+  /// Product the active list's codes are printed for; empty when none was set.
+  String get product => _product;
   int? get importedAt => _importedAt;
   String get periodEnd => _periodEnd;
   int? get lowStock => _lowStock;
@@ -78,6 +84,25 @@ class TrackerRepository {
   /// Lists moved to the list history, newest first.
   List<ArchivedList> get archivedLists => List.unmodifiable(_archived);
 
+  /// Products added or used so far, one spelling each, to pick from so records of a product group together.
+  List<String> get products {
+    final names = <String, String>{};
+    for (final p in [..._productNames, _product, ..._archived.map((a) => a.product), ..._entryMap.values.map((d) => d.product)]) {
+      if (p.isNotEmpty) names.putIfAbsent(p.toLowerCase(), () => p);
+    }
+    return names.values.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  }
+
+  List<ProductStats> get productStats => [
+        for (final name in products)
+          ProductStats.compute(
+            name: name,
+            activeCodes: _product.toLowerCase() == name.toLowerCase() ? _codes.length : 0,
+            archived: _archived,
+            records: _entryMap.values,
+          ),
+      ];
+
   ProgressStats get progress => ProgressStats.compute(codes: _codes, scans: _scanList, days: _dayMap.values, periodEnd: _periodEnd, defaultTarget: _defaultTarget);
 
   StockStats get stock {
@@ -90,7 +115,13 @@ class TrackerRepository {
   Scan? get highestScan => _scanList.where((s) => s.pos != null).fold<Scan?>(null, (a, s) => a == null || s.pos! > a.pos! ? s : a);
 
   /// 1-based print position of [code] in the imported list, null when it is not in it.
-  int? positionOf(String code) => _index[code.trim()];
+  int? positionOf(String code) => _index[_key(code)];
+
+  /// Codes are matched without dashes, so `LT2026012450` finds `LT-2026-012450`.
+  static String _key(String code) => code.trim().replaceAll('-', '');
+
+  /// [code] as written in the list when it is in it, else as typed.
+  String _listCode(String code, int? pos) => pos == null ? code.trim() : _codes[pos - 1];
 
   /// Where the machine stood when [date] (yyyy-MM-dd) began, for Log by scan.
   ScanBaseline scanBaselineFor(String date) => scanBaseline(date: date, days: _dayMap.values, scans: _scanList);
@@ -99,10 +130,11 @@ class TrackerRepository {
   /// What is already logged for that day (all its records) is passed along, so a scan can't silently lower it.
   ScanLogDraft scanLogDraft(String code, DateTime date) {
     final logged = _dayMap[ymd(date)];
+    final pos = positionOf(code);
     return ScanLogDraft(
-      code: code.trim(),
+      code: _listCode(code, pos),
       date: date,
-      pos: positionOf(code),
+      pos: pos,
       baseline: scanBaselineFor(ymd(date)),
       loggedCounter: logged?.counter,
       loggedPos: logged?.scanPos,
@@ -137,10 +169,10 @@ class TrackerRepository {
     _load();
   }
 
-  /// Unique, time-ordered record id (microseconds since epoch).
+  /// Unique, time-ordered record id (microseconds since epoch); the clock can tick slower than that.
   String _newId() {
     var t = DateTime.now().microsecondsSinceEpoch;
-    while (_entryMap.containsKey('$t') || _days.containsKey('$t')) {
+    while (_entryMap.containsKey('$t') || _days.containsKey('$t') || _printer.containsKey('$t') || _archive.containsKey('$t')) {
       t++;
     }
     return '$t';
@@ -167,7 +199,7 @@ class TrackerRepository {
 
   void _load() {
     final c = _kv.get('codes') as Map?;
-    _setCodes(c == null ? <String>[] : List<String>.from(c['list'] as List), c?['fileName'] as String? ?? '', c?['importedAt'] as int?);
+    _setCodes(c == null ? <String>[] : List<String>.from(c['list'] as List), c?['fileName'] as String? ?? '', c?['importedAt'] as int?, product: c?['product'] as String? ?? '');
     final settings = _kv.get('settings') as Map?;
     _periodEnd = settings?['periodEnd'] as String? ?? '';
     _lowStock = settings?['lowStock'] as int?;
@@ -175,6 +207,7 @@ class TrackerRepository {
     final shipStart = settings?['shipStart'] as Map?;
     _shipStartQty = shipStart?['qty'] as int?;
     _shipStartDate = shipStart?['date'] as String? ?? '';
+    _productNames = List<String>.from(settings?['products'] as List? ?? []);
     _setEntries(_days.values.map((v) => Day.fromMap(v as Map)));
     _scanList = _scans.values.map((v) => Scan.fromMap(v as Map)).toList()..sort((a, b) => a.ts.compareTo(b.ts));
     _stockMoves = _stock.values.map((v) => StockMove.fromMap(v as Map)).toList()..sort((a, b) => a.ts.compareTo(b.ts));
@@ -188,28 +221,77 @@ class TrackerRepository {
         'lowStock': _lowStock,
         'defaultTarget': _defaultTarget,
         'shipStart': _shipStartQty == null ? null : {'qty': _shipStartQty, 'date': _shipStartDate},
+        'products': _productNames,
       };
 
   Future<void> _saveSettings() => _kv.put('settings', _settings);
 
-  void _setCodes(List<String> list, String name, int? at) {
+  void _setCodes(List<String> list, String name, int? at, {String product = ''}) {
     _codes = list;
     _fileName = name;
     _importedAt = at;
+    _product = product;
     _index = {};
     for (var i = 0; i < list.length; i++) {
-      _index.putIfAbsent(list[i], () => i + 1);
+      _index.putIfAbsent(_key(list[i]), () => i + 1);
     }
   }
 
-  Future<void> importCodes(List<String> list, String name, {required bool clearScans}) async {
+  Future<void> importCodes(List<String> list, String name, {required bool clearScans, String product = ''}) async {
     final at = DateTime.now().millisecondsSinceEpoch;
-    await _kv.put('codes', {'list': list, 'fileName': name, 'importedAt': at});
+    await _kv.put('codes', {'list': list, 'fileName': name, 'importedAt': at, 'product': product});
     if (clearScans) {
       await _scans.clear();
       _scanList = [];
     }
-    _setCodes(list, name, at);
+    _setCodes(list, name, at, product: product);
+    _changes.add(null);
+  }
+
+  /// Sets the product of the active list.
+  Future<void> setProduct(String value) async {
+    _product = value.trim();
+    await _kv.put('codes', {'list': _codes, 'fileName': _fileName, 'importedAt': _importedAt, 'product': _product});
+    _changes.add(null);
+  }
+
+  /// Sets the product of an archived list, e.g. one archived before it had a product.
+  Future<void> setArchivedProduct(String id, String value) async {
+    _archived = [for (final a in _archived) a.id == id ? a.copyWith(product: value.trim()) : a];
+    await _archive.put(id, _archived.firstWhere((a) => a.id == id).toMap());
+    _changes.add(null);
+  }
+
+  /// Adds a product to pick from; a name already there (ignoring case) changes nothing.
+  Future<void> addProduct(String value) async {
+    final name = value.trim();
+    if (name.isEmpty || products.any((p) => p.toLowerCase() == name.toLowerCase())) return;
+    _productNames = [..._productNames, name];
+    await _saveSettings();
+    _changes.add(null);
+  }
+
+  /// Renames a product everywhere it is recorded. Renaming to another product's name merges them.
+  Future<void> renameProduct(String old, String value) async {
+    final name = products.where((p) => p.toLowerCase() == value.trim().toLowerCase() && p.toLowerCase() != old.toLowerCase()).firstOrNull ?? value.trim();
+    if (name.isEmpty) return;
+    bool same(String p) => p.toLowerCase() == old.toLowerCase();
+    _productNames = [for (final p in _productNames) same(p) ? name : p];
+    await _saveSettings();
+    if (same(_product)) await setProduct(name);
+    for (final list in _archived.where((a) => same(a.product)).toList()) {
+      await setArchivedProduct(list.id, name);
+    }
+    for (final day in _entryMap.values.where((d) => same(d.product)).toList()) {
+      await saveDay(day.copyWith(product: name));
+    }
+    _changes.add(null);
+  }
+
+  /// Removes a product no list or daily record uses; one still in use stays in [products].
+  Future<void> deleteProduct(String name) async {
+    _productNames = _productNames.where((p) => p.toLowerCase() != name.toLowerCase()).toList();
+    await _saveSettings();
     _changes.add(null);
   }
 
@@ -228,6 +310,7 @@ class TrackerRepository {
       archivedAt: at,
       importedAt: _importedAt,
       scans: _scanList,
+      product: _product,
     );
     // stored before anything is removed, so a failure part way can't lose the list
     await _archive.put(entry.id, entry.toMap());
@@ -244,8 +327,8 @@ class TrackerRepository {
   }
 
   Future<Scan> addScan(String text) async {
-    final code = text.trim();
-    final scan = Scan(ts: DateTime.now().millisecondsSinceEpoch, code: code, pos: _index[code]);
+    final pos = positionOf(text);
+    final scan = Scan(ts: DateTime.now().millisecondsSinceEpoch, code: _listCode(text, pos), pos: pos);
     await _scans.add(scan.toMap());
     _scanList.add(scan);
     _changes.add(null);
@@ -262,7 +345,9 @@ class TrackerRepository {
         : previous?.counter != null
             ? previous!.counterAt
             : DateTime.now().millisecondsSinceEpoch;
-    day = day.copyWith(counterAt: () => counterAt);
+    // a first counter with no product chosen (form, scan or printer) belongs to the active list's product
+    final product = day.counter != null && previous?.counter == null && day.product.isEmpty ? _product : day.product;
+    day = day.copyWith(counterAt: () => counterAt, product: product);
     _setEntries({..._entryMap, day.id: day}.values);
     await _days.put(day.id, day.toMap());
     _changes.add(null);
@@ -367,7 +452,7 @@ class TrackerRepository {
         'app': 'qr-tracker',
         'version': 1,
         'exportedAt': DateTime.now().millisecondsSinceEpoch,
-        'codes': {'list': _codes, 'fileName': _fileName, 'importedAt': _importedAt},
+        'codes': {'list': _codes, 'fileName': _fileName, 'importedAt': _importedAt, 'product': _product},
         'settings': _settings,
         'days': _entryMap.values.map((d) => d.toMap()).toList(),
         'scans': _scanList.map((s) => s.toMap()).toList(),
@@ -381,7 +466,7 @@ class TrackerRepository {
     if (data is! Map || data['app'] != 'qr-tracker') throw const FormatException('This is not a QR Tracker backup file.');
     await Future.wait([_kv.clear(), _days.clear(), _scans.clear(), _stock.clear(), _printer.clear(), _archive.clear()]);
     final c = data['codes'] as Map? ?? {};
-    await _kv.put('codes', {'list': List<String>.from(c['list'] as List? ?? []), 'fileName': c['fileName'] ?? '', 'importedAt': c['importedAt']});
+    await _kv.put('codes', {'list': List<String>.from(c['list'] as List? ?? []), 'fileName': c['fileName'] ?? '', 'importedAt': c['importedAt'], 'product': c['product'] ?? ''});
     final settings = data['settings'] as Map?;
     await _kv.put('settings', {...?settings});
     // older backups (and the Ionic version) store days without ids; they are given one below

@@ -4,12 +4,14 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
 import '../../../core/utils/responsive.dart';
 import '../../../core/widgets/app_widgets.dart';
+import '../../../core/widgets/product_field.dart';
 import '../model/data_state.dart';
 
 class QrListCard extends StatelessWidget {
-  const QrListCard({super.key, required this.state});
+  const QrListCard({super.key, required this.state, required this.onEditProduct});
 
   final DataState state;
+  final VoidCallback onEditProduct;
 
   @override
   Widget build(BuildContext context) => Panel(
@@ -34,6 +36,8 @@ class QrListCard extends StatelessWidget {
               ),
             ]),
             if (state.hasList) ...[
+              SizedBox(height: 12.r),
+              ProductTile(product: state.product, onTap: onEditProduct),
               SizedBox(height: 12.r),
               state.complete
                   ? const Pill('COMPLETED', kind: PillKind.info, icon: Icons.task_alt)

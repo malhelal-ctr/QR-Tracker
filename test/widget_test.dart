@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive_ce.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_tracker/core/data/models.dart';
+import 'package:qr_tracker/core/data/product_stats.dart';
 import 'package:qr_tracker/core/data/progress_stats.dart';
 import 'package:qr_tracker/core/data/shipping_stats.dart';
 import 'package:qr_tracker/core/data/printer_stats.dart';
@@ -445,6 +446,120 @@ void main() {
     final old = jsonDecode(backup) as Map..remove('archive');
     await reopened.restore(jsonEncode(old));
     expect(reopened.archivedLists, isEmpty);
+  });
+
+  test('groupByProduct: same product together ignoring case, no product last', () {
+    ArchivedList l(String id, String product) => ArchivedList(id: id, fileName: id, codeText: '', total: 10, printed: 0, logged: 0, archivedAt: 0, product: product);
+    final groups = groupByProduct([l('nov', ''), l('oct2', 'Cover Coat'), l('oct1', 'All Purpose Joint'), l('sep', 'cover coat')]);
+    expect(groups.map((g) => (g.$1, g.$2.map((a) => a.id).join(','))), [('Cover Coat', 'oct2,sep'), ('All Purpose Joint', 'oct1'), ('', 'nov')]);
+  });
+
+  test('TrackerRepository: a list keeps its product through archive, restart and backup', () async {
+    final dir = await Directory.systemTemp.createTemp('qr_tracker_product');
+    addTearDown(() async {
+      await Hive.close();
+      await dir.delete(recursive: true);
+    });
+    final repo = TrackerRepository();
+    await repo.init(path: dir.path);
+    await repo.importCodes(['A1'], 'Oct_31_2026_qr_serials.xlsx', clearScans: true, product: 'Cover Coat');
+    expect(repo.product, 'Cover Coat');
+    await repo.archiveList();
+    expect(repo.product, '');
+    expect(repo.archivedLists.single.product, 'Cover Coat');
+
+    await repo.importCodes(['B1'], 'Nov_1_2026_qr_serials.xlsx', clearScans: true, product: 'Oops');
+    await repo.setProduct(' All Purpose Joint ');
+    expect(repo.products, ['All Purpose Joint', 'Cover Coat']);
+
+    await Hive.close();
+    final reopened = TrackerRepository();
+    await reopened.init(path: dir.path);
+    expect(reopened.product, 'All Purpose Joint');
+
+    await reopened.setArchivedProduct(reopened.archivedLists.single.id, 'Cover Coat 5L');
+    final backup = reopened.backupJson();
+    await reopened.resetAll();
+    await reopened.restore(backup);
+    expect(reopened.product, 'All Purpose Joint');
+    expect(reopened.archivedLists.single.product, 'Cover Coat 5L');
+  });
+
+  test('TrackerRepository: daily records take the active product, and products can be managed', () async {
+    final dir = await Directory.systemTemp.createTemp('qr_tracker_products');
+    addTearDown(() async {
+      await Hive.close();
+      await dir.delete(recursive: true);
+    });
+    final repo = TrackerRepository();
+    await repo.init(path: dir.path);
+    await repo.addProduct('Cover Coat');
+    await repo.addProduct(' cover coat '); // same product
+    await repo.addProduct('Spare');
+    expect(repo.products, ['Cover Coat', 'Spare']);
+
+    await repo.importCodes(['A1', 'A2'], 'Oct_31.xlsx', clearScans: true, product: 'Cover Coat');
+    await repo.saveDay(const Day(date: '2026-10-31', counter: 5000)); // takes the active list's product
+    await repo.saveDay(const Day(date: '2026-11-01', counter: 700, product: 'All Purpose Joint')); // chosen for the day
+    await repo.saveDay(repo.entryOn('2026-10-31')!.copyWith(note: 'edited'));
+    await repo.savePrinterReading(date: DateTime(2026, 11, 1), value: 100);
+    await repo.savePrinterReading(date: DateTime(2026, 11, 2), value: 400); // printer fill takes the product too
+    expect(repo.days['2026-10-31']!.product, 'Cover Coat');
+    expect(repo.days['2026-11-01']!.product, 'All Purpose Joint');
+    expect(repo.days['2026-11-02']!.product, 'Cover Coat');
+
+    ProductStats stats(String name) => repo.productStats.firstWhere((p) => p.name == name);
+    final cover = stats('Cover Coat');
+    expect((cover.lists, cover.codes, cover.days, cover.printed, cover.active), (1, 2, 2, 5300, true));
+    expect(stats('Spare').inUse, isFalse);
+
+    // renaming reaches lists and days; renaming onto another product merges them
+    await repo.renameProduct('All Purpose Joint', 'APJ');
+    expect(repo.days['2026-11-01']!.product, 'APJ');
+    await repo.archiveList();
+    await repo.renameProduct('Cover Coat', 'apj');
+    expect(repo.products, ['APJ', 'Spare']);
+    expect(repo.archivedLists.single.product, 'APJ');
+    expect(stats('APJ').printed, 6000);
+
+    await repo.deleteProduct('Spare');
+    await repo.deleteProduct('APJ'); // still used: stays
+    expect(repo.products, ['APJ']);
+
+    // saved products survive a backup, even unused ones
+    await repo.addProduct('Unused');
+    final backup = repo.backupJson();
+    await repo.resetAll();
+    expect(repo.products, isEmpty);
+    await repo.restore(backup);
+    expect(repo.products, ['APJ', 'Unused']);
+  });
+
+  test('TrackerRepository: codes match without dashes and are kept as written in the list', () async {
+    final dir = await Directory.systemTemp.createTemp('qr_tracker_dashes');
+    addTearDown(() async {
+      await Hive.close();
+      await dir.delete(recursive: true);
+    });
+    final repo = TrackerRepository();
+    await repo.init(path: dir.path);
+    await repo.importCodes(['LT-2026-000001', 'LT-2026-000002', 'LT2026000003'], 'list.xlsx', clearScans: true);
+
+    expect(repo.positionOf('LT2026000002'), 2);
+    expect(repo.positionOf(' LT-2026-000002 '), 2);
+    expect(repo.positionOf('LT-2026-000003'), 3); // dashes typed where the list has none
+    expect(repo.positionOf('LT2026000009'), isNull);
+
+    final scan = await repo.addScan('LT2026000002');
+    expect((scan.code, scan.pos), ('LT-2026-000002', 2));
+    final stray = await repo.addScan(' XX-1 ');
+    expect((stray.code, stray.pos), ('XX-1', null));
+    expect(repo.scanLogDraft('LT2026000001', DateTime(2026, 11, 4)).code, 'LT-2026-000001');
+  });
+
+  test('ImportPreview keeps the product when other options change', () {
+    final p = ImportPreview.parse('f.csv', ['A1', 'A2']).copyWith(product: 'Cover Coat');
+    expect(p.copyWith(hasHeader: true).product, 'Cover Coat');
   });
 
   group('cameraIssues', () {

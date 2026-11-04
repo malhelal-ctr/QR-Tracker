@@ -7,7 +7,7 @@ import '../../../core/utils/responsive.dart';
 import '../../../core/widgets/app_widgets.dart';
 import 'action_row.dart';
 
-/// Finished QR lists, newest first.
+/// Finished QR lists grouped by product, newest first.
 class ListHistoryCard extends StatelessWidget {
   const ListHistoryCard({super.key, required this.lists, required this.onOpen});
 
@@ -20,14 +20,22 @@ class ListHistoryCard extends StatelessWidget {
         child: lists.isEmpty
             ? Text('No archived lists yet.', style: sans(15, color: C.onVariant))
             : Column(children: [
-                for (final (i, list) in lists.indexed) ...[
+                for (final (i, (product, group)) in groupByProduct(lists).indexed) ...[
                   if (i > 0) Divider(indent: 16.r, endIndent: 16.r),
-                  ActionRow(
-                    icon: Icons.history,
-                    title: list.fileName,
-                    subtitle: '${fmt(list.total)} codes · ${fmt(list.scans.length)} scans · archived ${fmtTime(list.archivedAt)}',
-                    onTap: () => onOpen(list),
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(16.r, 12.r, 16.r, 0),
+                    child: Row(children: [
+                      Expanded(child: Align(alignment: Alignment.centerLeft, child: MicroLabel(product.isEmpty ? 'No product' : product, icon: Icons.sell_outlined, color: C.primary))),
+                      MicroLabel('${fmt(group.fold<int>(0, (a, l) => a + l.total))} codes'),
+                    ]),
                   ),
+                  for (final list in group)
+                    ActionRow(
+                      icon: Icons.history,
+                      title: list.fileName,
+                      subtitle: '${fmt(list.total)} codes · ${fmt(list.scans.length)} scans · archived ${fmtTime(list.archivedAt)}',
+                      onTap: () => onOpen(list),
+                    ),
                 ],
               ]),
       );

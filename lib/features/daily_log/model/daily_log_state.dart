@@ -23,6 +23,8 @@ class DailyLogState {
     required this.from,
     required this.to,
     this.printer = const [],
+    this.product = '',
+    this.products = const [],
   });
 
   /// Production day the counter and note belong to (yesterday by default, or the day being edited).
@@ -59,6 +61,12 @@ class DailyLogState {
 
   /// Printer counter readings with what each one printed, oldest first.
   final List<PrinterStep> printer;
+
+  /// Product the form saves the day under: the day's own, else the active list's.
+  final String product;
+
+  /// Saved products to pick from.
+  final List<String> products;
 
   /// Days shown under the form on the Log tab.
   static const recentCount = 7;
@@ -105,6 +113,8 @@ class DailyLogState {
     DateTime? from,
     DateTime? to,
     List<PrinterStep>? printer,
+    String? product,
+    List<String>? products,
   }) => DailyLogState(
     date: date ?? this.date,
     history: history ?? this.history,
@@ -120,5 +130,7 @@ class DailyLogState {
     from: from ?? this.from,
     to: to ?? this.to,
     printer: printer ?? this.printer,
+    product: product ?? this.product,
+    products: products ?? this.products,
   );
 }

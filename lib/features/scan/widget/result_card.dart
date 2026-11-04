@@ -80,6 +80,7 @@ class ResultCard extends StatelessWidget {
                   color: C.lowest,
                   padding: EdgeInsets.all(14.r),
                   child: Column(children: [
+                    if (result.product.isNotEmpty) ...[_CodeRow('Product', result.product), SizedBox(height: 12.r)],
                     _CodeRow('Scanned code', result.scan.code, highlight: true),
                     if (result.nextCode case final next?) ...[SizedBox(height: 12.r), _CodeRow('Next to print', next)],
                   ]),

@@ -9,9 +9,10 @@ import 'action_row.dart';
 
 /// Bottom sheet with what an archived list reached, and its files to export.
 class ArchivedListSheet extends StatelessWidget {
-  const ArchivedListSheet({super.key, required this.list, required this.onExportCodes, required this.onExportScans});
+  const ArchivedListSheet({super.key, required this.list, required this.onEditProduct, required this.onExportCodes, required this.onExportScans});
 
   final ArchivedList list;
+  final VoidCallback onEditProduct;
   final VoidCallback onExportCodes;
   final VoidCallback onExportScans;
 
@@ -40,6 +41,8 @@ class ArchivedListSheet extends StatelessWidget {
               Panel(
                 padding: EdgeInsets.symmetric(vertical: 4.r),
                 child: Column(children: [
+                  ActionRow(icon: Icons.sell_outlined, title: list.product.isEmpty ? 'Add product' : list.product, subtitle: 'Product these codes were printed for', onTap: onEditProduct),
+                  Divider(indent: 16.r, endIndent: 16.r),
                   ActionRow(icon: Icons.qr_code_2, title: 'QR list (CSV)', subtitle: '${fmt(list.total)} codes in print order', onTap: onExportCodes),
                   Divider(indent: 16.r, endIndent: 16.r),
                   ActionRow(icon: Icons.table_rows_outlined, title: 'Scans (CSV)', subtitle: '${fmt(list.scans.length)} scans with time and print position', onTap: onExportScans),

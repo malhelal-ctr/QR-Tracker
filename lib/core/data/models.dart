@@ -24,6 +24,7 @@ class ArchivedList {
     required this.archivedAt,
     this.importedAt,
     this.scans = const [],
+    this.product = '',
   });
 
   factory ArchivedList.fromMap(Map m) => ArchivedList(
@@ -36,6 +37,7 @@ class ArchivedList {
         archivedAt: m['archivedAt'] as int,
         importedAt: m['importedAt'] as int?,
         scans: [for (final s in (m['scans'] as List? ?? [])) Scan.fromMap(s as Map)],
+        product: (m['product'] as String?) ?? '',
       );
 
   /// Storage key.
@@ -57,7 +59,23 @@ class ArchivedList {
   final int? importedAt;
   final List<Scan> scans;
 
+  /// Product the codes were printed for; empty when none was set.
+  final String product;
+
   List<String> get codes => codeText.isEmpty ? const [] : codeText.split('\n');
+
+  ArchivedList copyWith({String? product}) => ArchivedList(
+        id: id,
+        fileName: fileName,
+        codeText: codeText,
+        total: total,
+        printed: printed,
+        logged: logged,
+        archivedAt: archivedAt,
+        importedAt: importedAt,
+        scans: scans,
+        product: product ?? this.product,
+      );
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -69,7 +87,17 @@ class ArchivedList {
         'archivedAt': archivedAt,
         'importedAt': importedAt,
         'scans': scans.map((s) => s.toMap()).toList(),
+        'product': product,
       };
+}
+
+/// [lists] grouped by product, ignoring case, keeping their order; lists without a product come last.
+List<(String, List<ArchivedList>)> groupByProduct(Iterable<ArchivedList> lists) {
+  final groups = <String, (String, List<ArchivedList>)>{};
+  for (final list in lists) {
+    (groups[list.product.toLowerCase()] ??= (list.product, [])).$2.add(list);
+  }
+  return [...groups.values.where((g) => g.$1.isNotEmpty), ...groups.values.where((g) => g.$1.isEmpty)];
 }
 
 enum StockMoveType {
@@ -108,7 +136,7 @@ class StockMove {
 /// One log record: what was printed / targeted / shipped on [date]. Stored under [id], so a date can
 /// have several records; [Day.mergeByDate] adds them up into one per date for totals and charts.
 class Day {
-  const Day({this.id = '', required this.date, this.target, this.counter, this.counterAt, this.shipped, this.note = '', this.scanPos, this.fromPrinter = false});
+  const Day({this.id = '', required this.date, this.target, this.counter, this.counterAt, this.shipped, this.note = '', this.scanPos, this.fromPrinter = false, this.product = ''});
 
   factory Day.fromMap(Map m) => Day(
         id: (m['id'] as String?) ?? '',
@@ -120,6 +148,7 @@ class Day {
         note: (m['note'] as String?) ?? '',
         scanPos: m['scanPos'] as int?,
         fromPrinter: (m['fromPrinter'] as bool?) ?? false,
+        product: (m['product'] as String?) ?? '',
       );
 
   /// Storage key; empty until the record is first saved (and in older data, until it is migrated).
@@ -141,10 +170,13 @@ class Day {
   /// [counter] is filled from printer counter readings (Printer tab), and is kept in step with them.
   final bool fromPrinter;
 
+  /// Product printed in this record; empty when none was set.
+  final String product;
+
   /// True when nothing is logged in the record.
   bool get isEmpty => target == null && counter == null && shipped == null && note.isEmpty;
 
-  Day copyWith({String? id, int? Function()? target, int? Function()? counter, int? Function()? counterAt, int? Function()? shipped, String? note, int? Function()? scanPos, bool? fromPrinter}) => Day(
+  Day copyWith({String? id, int? Function()? target, int? Function()? counter, int? Function()? counterAt, int? Function()? shipped, String? note, int? Function()? scanPos, bool? fromPrinter, String? product}) => Day(
         id: id ?? this.id,
         date: date,
         target: target == null ? this.target : target(),
@@ -154,9 +186,10 @@ class Day {
         note: note ?? this.note,
         scanPos: scanPos == null ? this.scanPos : scanPos(),
         fromPrinter: fromPrinter ?? this.fromPrinter,
+        product: product ?? this.product,
       );
 
-  Map<String, dynamic> toMap() => {'id': id, 'date': date, 'target': target, 'counter': counter, 'counterAt': counterAt, 'shipped': shipped, 'note': note, 'scanPos': scanPos, 'fromPrinter': fromPrinter};
+  Map<String, dynamic> toMap() => {'id': id, 'date': date, 'target': target, 'counter': counter, 'counterAt': counterAt, 'shipped': shipped, 'note': note, 'scanPos': scanPos, 'fromPrinter': fromPrinter, 'product': product};
 
   /// One [Day] per date from records in creation order: counters and shipments add up, the latest target wins,
   /// notes are joined, [counterAt] is the earliest and [scanPos] the furthest. The merged day keeps the first record's id.
@@ -175,6 +208,7 @@ class Day {
               note: [m.note, r.note].where((n) => n.isNotEmpty).join(' · '),
               scanPos: () => [m.scanPos, r.scanPos].nonNulls.fold<int?>(null, (a, p) => a == null || p > a ? p : a),
               fromPrinter: m.fromPrinter || r.fromPrinter,
+              product: m.product.isEmpty ? r.product : m.product,
             );
     }
     return merged;

@@ -17,6 +17,7 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
           state.copyWith(
             history: _history(_repository),
             printer: _repository.printerHistory,
+            products: _repository.products,
             suggested: () => _repository.progress.suggested,
             defaultTarget: () => _repository.defaultTarget,
           ),
@@ -50,6 +51,8 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
       history: _history(repository),
       counter: day?.counter,
       note: day?.note ?? '',
+      product: _productFor(repository, day),
+      products: repository.products,
       target: _startingTarget(repository),
       defaultTarget: repository.defaultTarget,
       suggested: repository.progress.suggested,
@@ -63,6 +66,9 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
       repository.entries.values.where((d) => d.counter != null || d.target != null || d.note.isNotEmpty).toList()
         ..sort((a, b) => b.date != a.date ? b.date.compareTo(a.date) : b.id.compareTo(a.id));
 
+  /// The day's product, else the active list's.
+  static String _productFor(TrackerRepository repository, Day? day) => day == null || day.product.isEmpty ? repository.product : day.product;
+
   /// The default daily target; before one is set, the most recent day target or the suggestion.
   static int? _startingTarget(TrackerRepository repository) =>
       repository.defaultTarget ?? _history(repository).where((d) => d.target != null).firstOrNull?.target ?? repository.progress.suggested;
@@ -75,6 +81,7 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
         date: date,
         counter: () => day?.counter,
         note: day?.note ?? '',
+        product: _productFor(_repository, day),
         target: () => _startingTarget(_repository),
         editing: () => null,
         formVersion: state.formVersion + 1,
@@ -89,6 +96,7 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
       date: DateTime.parse(day.date),
       counter: () => day.counter,
       note: day.note,
+      product: day.product,
       target: () => day.target,
       editing: () => day,
       formVersion: state.formVersion + 1,
@@ -102,6 +110,8 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
   }
 
   void selectTab(LogTab tab) => emit(state.copyWith(tab: tab));
+
+  void setProduct(String product) => emit(state.copyWith(product: product.trim()));
 
   void selectPreset(PeriodPreset preset) => emit(_withPeriod(state, preset: preset));
 
@@ -127,13 +137,13 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
       if (c == null && t == null && n.isEmpty) {
         await deleteDay(existing.id);
       } else {
-        await _repository.saveDay(existing.copyWith(counter: () => c, target: () => t, note: n));
+        await _repository.saveDay(existing.copyWith(counter: () => c, target: () => t, note: n, product: state.product));
       }
       return;
     }
 
     if (c != null || n.isNotEmpty) {
-      await _repository.saveDay(existing.copyWith(counter: c == null ? null : () => c, note: n));
+      await _repository.saveDay(existing.copyWith(counter: c == null ? null : () => c, note: n, product: state.product));
     }
     if (t != null && t != _repository.defaultTarget) await _repository.setDefaultTarget(t);
   }

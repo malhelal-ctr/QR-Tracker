@@ -11,6 +11,8 @@ class DataState {
     this.daysLeft,
     this.printed = 0,
     this.archived = const [],
+    this.product = '',
+    this.products = const [],
     this.busy = false,
   });
 
@@ -23,6 +25,8 @@ class DataState {
         daysLeft: repository.progress.daysLeft,
         printed: repository.progress.printed,
         archived: repository.archivedLists,
+        product: repository.product,
+        products: repository.products,
         busy: busy,
       );
 
@@ -41,6 +45,12 @@ class DataState {
   /// Finished lists, newest first.
   final List<ArchivedList> archived;
 
+  /// Product of the active list, empty when none was set.
+  final String product;
+
+  /// Products used so far.
+  final List<String> products;
+
   /// True while a file is being read for import.
   final bool busy;
 
@@ -58,6 +68,8 @@ class DataState {
         daysLeft: daysLeft,
         printed: printed,
         archived: archived,
+        product: product,
+        products: products,
         busy: busy ?? this.busy,
       );
 }

@@ -86,6 +86,7 @@ class HistoryRow extends StatelessWidget {
                               ],
                             ],
                           ),
+                          if (day.product.isNotEmpty) Text(day.product, style: sans(14, weight: FontWeight.w600, color: C.primary)),
                           SizedBox(height: 4.r),
                           Text(
                             // "*" marks a target set for this day only

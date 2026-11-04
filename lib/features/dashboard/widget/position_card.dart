@@ -7,10 +7,11 @@ import '../../../core/utils/responsive.dart';
 import '../../../core/widgets/app_widgets.dart';
 
 class PositionCard extends StatelessWidget {
-  const PositionCard({super.key, required this.stats, required this.fileName, required this.onScan});
+  const PositionCard({super.key, required this.stats, required this.fileName, required this.onScan, this.product = ''});
 
   final ProgressStats stats;
   final String fileName;
+  final String product;
   final VoidCallback onScan;
 
   @override
@@ -38,6 +39,14 @@ class PositionCard extends StatelessWidget {
             SizedBox(width: 6.r),
             Flexible(child: Text(fileName, overflow: TextOverflow.ellipsis, style: mono(15, weight: FontWeight.w600))),
           ]),
+          if (product.isNotEmpty) ...[
+            SizedBox(height: 4.r),
+            Row(children: [
+              Icon(Icons.sell_outlined, size: 18.r, color: C.primary),
+              SizedBox(width: 6.r),
+              Flexible(child: Text(product, overflow: TextOverflow.ellipsis, style: sans(15, weight: FontWeight.w600))),
+            ]),
+          ],
           SizedBox(height: 18.r),
           Row(children: [
             const Expanded(child: MicroLabel('Queue completion')),
