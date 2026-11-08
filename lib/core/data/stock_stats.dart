@@ -1,3 +1,4 @@
+import 'lid_forecast.dart';
 import 'models.dart';
 
 /// Lid stock, kept simple:
@@ -15,7 +16,26 @@ class StockStats {
     this.coverUntil,
     this.shortfall = 0,
     this.lowStock,
+    this.forecast,
   });
+
+  /// When the lids run out at the average daily printing, and how urgent it is.
+  final LidForecast? forecast;
+
+  /// The same stats with [forecast].
+  StockStats withForecast(LidForecast forecast) => StockStats(
+        hasData: hasData,
+        onHand: onHand,
+        usedSinceCount: usedSinceCount,
+        received: received,
+        wasted: wasted,
+        lastCount: lastCount,
+        daysOfCover: daysOfCover,
+        coverUntil: coverUntil,
+        shortfall: shortfall,
+        lowStock: lowStock,
+        forecast: forecast,
+      );
 
   factory StockStats.compute({
     required List<StockMove> moves,
@@ -95,5 +115,9 @@ class StockStats {
   /// Alert threshold set by the user.
   final int? lowStock;
 
-  bool get isLow => lowStock != null && onHand <= lowStock!;
+  /// Below the lid count set by the user (an optional extra warning).
+  bool get belowMinimum => lowStock != null && onHand <= lowStock!;
+
+  /// Low: the lids run out within the lead time (or are out), or are below the set minimum.
+  bool get isLow => belowMinimum || (forecast?.needsOrder ?? false);
 }

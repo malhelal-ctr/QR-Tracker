@@ -1,136 +1,85 @@
 import '../../../core/data/models.dart';
-import '../../../core/data/printer_stats.dart';
-import '../../../core/utils/format.dart';
-import '../../../core/utils/period.dart';
+import '../../../core/data/month_plan.dart';
 
-/// Log page tabs: the morning entry with recent days, the full history with a date filter,
-/// and printer counter readings.
-enum LogTab { log, history, printer }
+/// How the month is shown: a calendar, a table of the days, or the machine total history.
+enum LogView { calendar, list, machine }
+
+/// What the entry panel needs for one production day.
+class LogEntry {
+  const LogEntry({
+    required this.date,
+    this.log,
+    this.previousTotal,
+    this.previousTotalDate,
+    this.monthTarget,
+    this.off = false,
+    this.product = '',
+    this.holiday,
+  });
+
+  /// Name of the holiday on this day, if it is one.
+  final String? holiday;
+
+  /// yyyy-MM-dd
+  final String date;
+
+  /// The day's log, null when nothing is logged yet.
+  final Day? log;
+
+  /// The machine total logged before this day, and its date, to check this day's total against.
+  final int? previousTotal;
+  final String? previousTotalDate;
+
+  /// The month's daily target (used when the day has no target of its own).
+  final int? monthTarget;
+
+  /// The day is marked as a day off.
+  final bool off;
+
+  /// Product to log under: the day's own, else the active list's.
+  final String product;
+}
 
 class DailyLogState {
   const DailyLogState({
-    required this.date,
-    required this.history,
-    this.counter,
-    this.note = '',
-    this.target,
-    this.defaultTarget,
-    this.suggested,
-    this.editing,
-    this.formVersion = 0,
-    this.tab = LogTab.log,
-    this.preset = PeriodPreset.thisMonth,
-    required this.from,
-    required this.to,
-    this.printer = const [],
-    this.product = '',
+    required this.month,
+    required this.summary,
+    this.view = LogView.calendar,
+    this.ownTarget = false,
     this.products = const [],
+    this.selected,
   });
 
-  /// Production day the counter and note belong to (yesterday by default, or the day being edited).
-  final DateTime date;
+  /// First day of the month shown.
+  final DateTime month;
 
-  /// Values to fill into the form.
-  final int? counter;
-  final String note;
+  /// The month's days and totals.
+  final MonthSummary summary;
 
-  /// New entry: the default daily target. Editing: that day's own target (null = uses the default).
-  final int? target;
+  final LogView view;
 
-  /// Daily target used for every day without its own.
-  final int? defaultTarget;
-
-  /// Codes per day needed to finish the list by the period end.
-  final int? suggested;
-
-  /// Log records, newest date first.
-  final List<Day> history;
-
-  /// History record loaded into the form; null for a normal new entry.
-  final Day? editing;
-
-  /// Bumped when the values above should be pushed into the text fields.
-  final int formVersion;
-
-  final LogTab tab;
-
-  /// History tab date filter.
-  final PeriodPreset preset;
-  final DateTime from;
-  final DateTime to;
-
-  /// Printer counter readings with what each one printed, oldest first.
-  final List<PrinterStep> printer;
-
-  /// Product the form saves the day under: the day's own, else the active list's.
-  final String product;
+  /// The month has its own daily target (not copied from an earlier month).
+  final bool ownTarget;
 
   /// Saved products to pick from.
   final List<String> products;
 
-  /// Days shown under the form on the Log tab.
-  static const recentCount = 7;
-
-  List<Day> get recent => history.take(recentCount).toList();
-
-  /// History within [from]–[to], newest first.
-  List<Day> get filtered {
-    final a = ymd(from), b = ymd(to);
-    return history.where((d) => d.date.compareTo(a) >= 0 && d.date.compareTo(b) <= 0).toList();
-  }
-
-  /// Totals for [filtered]: printed and average per day over days with a counter; [met] of [withTarget] days hit their target.
-  ({int printed, int logged, int? avg, int met, int withTarget}) get summary {
-    // per date, so several records on one day count as one day
-    final days = Day.mergeByDate(filtered.reversed).values;
-    final counted = days.where((d) => d.counter != null).toList();
-    final printed = counted.fold(0, (a, d) => a + d.counter!);
-    final targeted = counted.where((d) => targetFor(d) != null).toList();
-    return (
-      printed: printed,
-      logged: counted.length,
-      avg: counted.isEmpty ? null : (printed / counted.length).round(),
-      met: targeted.where((d) => d.counter! >= targetFor(d)!).length,
-      withTarget: targeted.length,
-    );
-  }
-
-  /// The day's own target, else the default.
-  int? targetFor(Day day) => day.target ?? defaultTarget;
+  /// Day open in the entry panel (yyyy-MM-dd); null when the panel is closed.
+  final String? selected;
 
   DailyLogState copyWith({
-    DateTime? date,
-    List<Day>? history,
-    int? Function()? counter,
-    String? note,
-    int? Function()? target,
-    int? Function()? defaultTarget,
-    int? Function()? suggested,
-    Day? Function()? editing,
-    int? formVersion,
-    LogTab? tab,
-    PeriodPreset? preset,
-    DateTime? from,
-    DateTime? to,
-    List<PrinterStep>? printer,
-    String? product,
+    DateTime? month,
+    MonthSummary? summary,
+    LogView? view,
+    bool? ownTarget,
     List<String>? products,
+    String? Function()? selected,
   }) => DailyLogState(
-    date: date ?? this.date,
-    history: history ?? this.history,
-    counter: counter == null ? this.counter : counter(),
-    note: note ?? this.note,
-    target: target == null ? this.target : target(),
-    defaultTarget: defaultTarget == null ? this.defaultTarget : defaultTarget(),
-    suggested: suggested == null ? this.suggested : suggested(),
-    editing: editing == null ? this.editing : editing(),
-    formVersion: formVersion ?? this.formVersion,
-    tab: tab ?? this.tab,
-    preset: preset ?? this.preset,
-    from: from ?? this.from,
-    to: to ?? this.to,
-    printer: printer ?? this.printer,
-    product: product ?? this.product,
+    month: month ?? this.month,
+    summary: summary ?? this.summary,
+    view: view ?? this.view,
+    ownTarget: ownTarget ?? this.ownTarget,
     products: products ?? this.products,
+    selected: selected == null ? this.selected : selected(),
   );
 }

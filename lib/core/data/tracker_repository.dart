@@ -5,7 +5,8 @@ import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 
 import '../utils/format.dart';
 import 'models.dart';
-import 'printer_stats.dart';
+import 'lid_forecast.dart';
+import 'month_plan.dart';
 import 'product_stats.dart';
 import 'progress_stats.dart';
 import 'scan_log.dart';
@@ -29,7 +30,16 @@ class TrackerRepository {
   int? _importedAt;
   String _periodEnd = '';
   int? _lowStock;
+  int _lidLeadTime = 2;
+  bool _lidNotify = true;
+  int _lidNotifyAt = 8 * 60;
   int? _defaultTarget;
+  Map<String, int> _monthTargets = {};
+  Set<String> _daysOff = {};
+  Set<String> _workDays = {};
+  Set<int> _weekend = {};
+  Map<String, String> _holidays = {};
+  bool _printerMigrated = false;
   int? _shipStartQty;
   String _shipStartDate = '';
   List<String> _productNames = [];
@@ -53,11 +63,56 @@ class TrackerRepository {
   String get periodEnd => _periodEnd;
   int? get lowStock => _lowStock;
 
-  /// Daily target used for every day that has no target of its own.
-  int? get defaultTarget => _defaultTarget;
+  /// This month's daily target.
+  int? get defaultTarget => dailyTargetFor(ym(DateTime.now()));
 
-  /// The day's own target, else the default daily target.
-  int? targetFor(Day? day) => day?.target ?? _defaultTarget;
+  /// Daily target of [month] ('yyyy-MM'), copied forward from the latest earlier month when it has none.
+  int? dailyTargetFor(String month) => monthDailyTarget(month, _monthTargets, fallback: _defaultTarget);
+
+  /// Months with a daily target of their own ('yyyy-MM' → codes per day).
+  Map<String, int> get monthTargets => Map.unmodifiable(_monthTargets);
+
+  /// [date] (yyyy-MM-dd) is marked as a day off: it has no target.
+  bool isOff(String date) => !_workDays.contains(date) && (_daysOff.contains(date) || _offByCalendar(date));
+
+  /// Off by the weekend or holiday settings (before any single-day exception).
+  bool _offByCalendar(String date) => _holidays.containsKey(date) || _weekend.contains(DateTime.parse(date).weekday);
+
+  /// Weekdays off every week (1 = Monday … 7 = Sunday).
+  Set<int> get weekend => Set.unmodifiable(_weekend);
+
+  /// Holidays: date (yyyy-MM-dd) → name.
+  Map<String, String> get holidays => Map.unmodifiable(_holidays);
+
+  /// Name of the holiday on [date], if it is one.
+  String? holidayOn(String date) => _holidays[date];
+
+  /// Single days marked off (long-press / panel), on top of the weekend and holidays; sorted.
+  List<String> get singleDaysOff => _daysOff.toList()..sort();
+
+  /// Weekend days or holidays marked as working days; sorted.
+  List<String> get extraWorkDays => _workDays.toList()..sort();
+
+  /// Removes a single-day exception: the day follows the weekend and holiday settings again.
+  Future<void> clearDayException(String date) async {
+    _daysOff = {..._daysOff}..remove(date);
+    _workDays = {..._workDays}..remove(date);
+    await _saveSettings();
+    _changes.add(null);
+  }
+
+  /// The day's own target, else its month's daily target; null on a day off.
+  int? targetFor(Day? day) => day == null ? defaultTarget : day.target ?? (isOff(day.date) ? null : dailyTargetFor(day.date.substring(0, 7)));
+
+  /// The Daily log of [month]: every day with its target and result, and the month's totals.
+  MonthSummary monthSummary(DateTime month, {DateTime? now}) =>
+      MonthSummary.compute(month: month, days: _dayMap, dailyTarget: dailyTargetFor(ym(month)), isOff: isOff, holidayOn: holidayOn, now: now);
+
+  /// The record holding the production log of [date] (one per day), else the day's first record.
+  Day? logOn(String date) => _entryMap.values.where((d) => d.date == date && d.hasLog).firstOrNull ?? entryOn(date);
+
+  /// The latest machine total logged before [date].
+  ({String date, int total})? totalBefore(String date) => previousTotal(date, _dayMap.values);
 
   /// Printed lids already in store when shipment tracking started, and that date (yyyy-MM-dd).
   int? get shipStartQty => _shipStartQty;
@@ -74,9 +129,6 @@ class TrackerRepository {
 
   /// The record the forms write to for [date] (one per day for now), oldest first.
   Day? entryOn(String date) => _entryMap.values.where((d) => d.date == date).firstOrNull;
-
-  /// Printer counter readings, each with what was printed since the previous one (oldest first).
-  List<PrinterStep> get printerHistory => printerSteps(_readings);
 
   /// Oldest first.
   List<StockMove> get stockMoves => List.unmodifiable(_stockMoves);
@@ -103,13 +155,38 @@ class TrackerRepository {
           ),
       ];
 
-  ProgressStats get progress => ProgressStats.compute(codes: _codes, scans: _scanList, days: _dayMap.values, periodEnd: _periodEnd, defaultTarget: _defaultTarget);
+  ProgressStats get progress => ProgressStats.compute(codes: _codes, scans: _scanList, days: _dayMap.values, periodEnd: _periodEnd, defaultTarget: targetFor(Day(date: ymd(DateTime.now()))));
 
   StockStats get stock {
     final p = progress;
+    final now = DateTime.now();
+    final average = workingDayAverage(days: _dayMap.values, isOff: isOff, today: now);
     // per record: each counter is checked against the stock count by its own log time
-    return StockStats.compute(moves: _stockMoves, days: _entryMap.values, remainingCodes: p.remaining, avgDailyUse: p.avg, lowStock: _lowStock);
+    final stats = StockStats.compute(moves: _stockMoves, days: _entryMap.values, remainingCodes: p.remaining, avgDailyUse: average, lowStock: _lowStock);
+    if (!stats.hasData) return stats;
+    final forecast = LidForecast.compute(
+      onHand: stats.onHand,
+      average: average,
+      isOff: isOff,
+      leadTime: _lidLeadTime,
+      bestRate: dailyTargetFor(ym(now)),
+      todayLogged: _dayMap[ymd(now)]?.counter != null,
+      now: now,
+    );
+    return stats.withForecast(forecast);
   }
+
+  /// Working days needed to get new lids after ordering.
+  int get lidLeadTime => _lidLeadTime;
+
+  /// Low-stock notification on, and its time of day (minutes after midnight).
+  bool get lidNotify => _lidNotify;
+  int get lidNotifyAt => _lidNotifyAt;
+
+  /// Day (yyyy-MM-dd) a low-stock notification was last shown straight away, so it isn't repeated
+  /// that day. Device-only: not in backups, and saving it doesn't notify [changes].
+  String get lidNotifiedOn => _kv.get('lidNotifiedOn') as String? ?? '';
+  Future<void> setLidNotifiedOn(String date) => _kv.put('lidNotifiedOn', date);
 
   /// Scan of the highest code so far, i.e. how far the machine has got.
   Scan? get highestScan => _scanList.where((s) => s.pos != null).fold<Scan?>(null, (a, s) => a == null || s.pos! > a.pos! ? s : a);
@@ -124,7 +201,12 @@ class TrackerRepository {
   String _listCode(String code, int? pos) => pos == null ? code.trim() : _codes[pos - 1];
 
   /// Where the machine stood when [date] (yyyy-MM-dd) began, for Log by scan.
-  ScanBaseline scanBaselineFor(String date) => scanBaseline(date: date, days: _dayMap.values, scans: _scanList);
+  ScanBaseline scanBaselineFor(String date) => scanBaseline(
+        date: date,
+        days: _dayMap.values,
+        scans: _scanList,
+        listStart: _importedAt == null ? null : ymd(DateTime.fromMillisecondsSinceEpoch(_importedAt!)),
+      );
 
   /// Log by scan: the counter worked out from a scanned [code] for production day [date].
   /// What is already logged for that day (all its records) is passed along, so a scan can't silently lower it.
@@ -145,7 +227,7 @@ class TrackerRepository {
   /// in the day's record (one per day for now). The scan itself is recorded by the caller.
   Future<void> saveScanLog(ScanLogDraft draft, int counter) async {
     final key = ymd(draft.date);
-    final existing = entryOn(key) ?? Day(date: key);
+    final existing = logOn(key) ?? Day(date: key);
     await saveDay(existing.copyWith(counter: () => counter, scanPos: () => draft.savePos));
   }
 
@@ -167,6 +249,84 @@ class TrackerRepository {
     _archive = await Hive.openBox('archive');
     await _migrateDays();
     _load();
+    await _migrateLog();
+  }
+
+  /// Brings the Daily log up to one log per day with monthly targets:
+  /// - dates with several production logs (from the trial phase) get them combined into the first one;
+  ///   shipments stay in their own records;
+  /// - each day's last printer reading (the old Printer tab) becomes that day's machine total, once;
+  /// - the single daily target becomes the target of every month logged so far, so changing a month's
+  ///   target later doesn't change the results of earlier months.
+  Future<void> _migrateLog() async {
+    final byDate = <String, List<Day>>{};
+    for (final d in _entryMap.values.where((d) => d.hasLog)) {
+      (byDate[d.date] ??= []).add(d);
+    }
+    for (final logs in byDate.values.where((l) => l.length > 1)) {
+      final keep = logs.first;
+      final merged = Day.mergeByDate(logs.map((d) => d.copyWith(shipped: () => null))).values.single;
+      await _putRaw(keep.copyWith(
+        counter: () => merged.counter,
+        counterAt: () => merged.counterAt,
+        target: () => merged.target,
+        note: merged.note,
+        scanPos: () => merged.scanPos,
+        fromPrinter: merged.fromPrinter,
+        product: merged.product,
+        total: () => merged.total,
+        totalReset: merged.totalReset,
+      ));
+      for (final other in logs.skip(1)) {
+        final rest = _withoutLog(other);
+        rest.isEmpty ? await _deleteRaw(rest.id) : await _putRaw(rest);
+      }
+    }
+
+    if (!_printerMigrated) {
+      final last = <String, PrinterReading>{};
+      final reset = <String>{};
+      for (final r in _readings.toList()..sort((a, b) => a.ts.compareTo(b.ts))) {
+        last[r.date] = r;
+        if (r.reset) reset.add(r.date);
+      }
+      for (final MapEntry(key: date, value: r) in last.entries) {
+        final day = logOn(date) ?? Day(id: _newId(), date: date);
+        if (day.total == null) await _putRaw(day.copyWith(total: () => r.value, totalReset: reset.contains(date)));
+      }
+      _printerMigrated = true;
+      await _saveSettings();
+    }
+
+    if (_monthTargets.isEmpty && _defaultTarget != null) {
+      final months = {ym(DateTime.now()), for (final d in _dayMap.values.where((d) => d.counter != null)) d.date.substring(0, 7)};
+      _monthTargets = {for (final m in months) m: _defaultTarget!};
+      await _saveSettings();
+    }
+    _changes.add(null);
+  }
+
+  /// The record with its production log taken out (a shipment stays).
+  static Day _withoutLog(Day d) => d.copyWith(
+        counter: () => null,
+        counterAt: () => null,
+        target: () => null,
+        note: '',
+        scanPos: () => null,
+        fromPrinter: false,
+        total: () => null,
+        totalReset: false,
+      );
+
+  /// Stores a record as it is (no time or product stamping), for migrations.
+  Future<void> _putRaw(Day day) async {
+    _setEntries({..._entryMap, day.id: day}.values);
+    await _days.put(day.id, day.toMap());
+  }
+
+  Future<void> _deleteRaw(String id) async {
+    _setEntries(_entryMap.values.where((d) => d.id != id));
+    await _days.delete(id);
   }
 
   /// Unique, time-ordered record id (microseconds since epoch); the clock can tick slower than that.
@@ -203,7 +363,16 @@ class TrackerRepository {
     final settings = _kv.get('settings') as Map?;
     _periodEnd = settings?['periodEnd'] as String? ?? '';
     _lowStock = settings?['lowStock'] as int?;
+    _lidLeadTime = settings?['lidLeadTime'] as int? ?? 2;
+    _lidNotify = settings?['lidNotify'] as bool? ?? true;
+    _lidNotifyAt = settings?['lidNotifyAt'] as int? ?? 8 * 60;
     _defaultTarget = settings?['defaultTarget'] as int?;
+    _monthTargets = {for (final MapEntry(:key, :value) in ((settings?['monthTargets'] as Map?) ?? {}).entries) key as String: value as int};
+    _daysOff = {...List<String>.from(settings?['daysOff'] as List? ?? [])};
+    _workDays = {...List<String>.from(settings?['workDays'] as List? ?? [])};
+    _weekend = {...List<int>.from(settings?['weekend'] as List? ?? [])};
+    _holidays = {for (final MapEntry(:key, :value) in ((settings?['holidays'] as Map?) ?? {}).entries) key as String: value as String};
+    _printerMigrated = settings?['printerMigrated'] as bool? ?? false;
     final shipStart = settings?['shipStart'] as Map?;
     _shipStartQty = shipStart?['qty'] as int?;
     _shipStartDate = shipStart?['date'] as String? ?? '';
@@ -219,7 +388,16 @@ class TrackerRepository {
   Map<String, dynamic> get _settings => {
         'periodEnd': _periodEnd,
         'lowStock': _lowStock,
+        'lidLeadTime': _lidLeadTime,
+        'lidNotify': _lidNotify,
+        'lidNotifyAt': _lidNotifyAt,
         'defaultTarget': _defaultTarget,
+        'monthTargets': _monthTargets,
+        'daysOff': (_daysOff.toList()..sort()),
+        'workDays': (_workDays.toList()..sort()),
+        'weekend': (_weekend.toList()..sort()),
+        'holidays': _holidays,
+        'printerMigrated': _printerMigrated,
         'shipStart': _shipStartQty == null ? null : {'qty': _shipStartQty, 'date': _shipStartDate},
         'products': _productNames,
       };
@@ -385,14 +563,121 @@ class TrackerRepository {
     _changes.add(null);
   }
 
-  Future<void> setDefaultTarget(int? value) async {
-    _defaultTarget = value;
+  /// Sets the daily target of [month] ('yyyy-MM'); null removes it (the month then copies the month before).
+  Future<void> setMonthTarget(String month, int? value) async {
+    _monthTargets = {..._monthTargets}..remove(month);
+    if (value != null) _monthTargets[month] = value;
     await _saveSettings();
     _changes.add(null);
   }
 
+  /// Marks [dates] (yyyy-MM-dd) as days off, or as working days. A weekend day or holiday marked as a
+  /// working day is kept as an exception, so the weekend / holiday setting doesn't make it off again.
+  Future<void> setDaysOff(Iterable<String> dates, bool off) async {
+    final set = dates.toSet();
+    if (off) {
+      _daysOff = {..._daysOff, ...set};
+      _workDays = _workDays.difference(set);
+    } else {
+      _daysOff = _daysOff.difference(set);
+      _workDays = {..._workDays.difference(set), ...set.where(_offByCalendar)};
+    }
+    await _saveSettings();
+    _changes.add(null);
+  }
+
+  /// Sets the weekend: weekdays that are off every week (1 = Monday … 7 = Sunday).
+  Future<void> setWeekend(Set<int> weekdays) async {
+    _weekend = {...weekdays};
+    await _saveSettings();
+    _changes.add(null);
+  }
+
+  /// Adds a holiday on every date from [from] to [to] (inclusive), or renames the dates already there.
+  Future<void> saveHoliday(DateTime from, DateTime to, String name) async {
+    final label = name.trim().isEmpty ? 'Holiday' : name.trim();
+    final dates = [for (var d = from; !d.isAfter(to); d = DateTime(d.year, d.month, d.day + 1)) ymd(d)];
+    _holidays = {..._holidays, for (final d in dates) d: label};
+    // a holiday is off even if the day was marked as a working day before
+    _workDays = _workDays.difference(dates.toSet());
+    await _saveSettings();
+    _changes.add(null);
+  }
+
+  Future<void> deleteHolidays(Iterable<String> dates) async {
+    _holidays = {..._holidays}..removeWhere((d, _) => dates.contains(d));
+    await _saveSettings();
+    _changes.add(null);
+  }
+
+  /// Saves the production log of [date]: one log per day, so an existing log is updated.
+  /// [target] is the day's own target (null = the month's daily target). A shipment in the record is kept.
+  Future<void> saveLog({
+    required String date,
+    required int? counter,
+    required int? total,
+    bool totalReset = false,
+    int? target,
+    String note = '',
+    String product = '',
+    int? scanPos,
+  }) async {
+    final existing = logOn(date) ?? Day(date: date);
+    final day = existing.copyWith(
+      counter: () => counter,
+      total: () => total,
+      totalReset: total != null && totalReset,
+      target: () => target,
+      note: note.trim(),
+      product: product.trim(),
+      scanPos: scanPos == null ? null : () => scanPos,
+    );
+    if (day.isEmpty) {
+      if (day.id.isNotEmpty) await deleteDay(day.id);
+    } else {
+      await saveDay(day);
+    }
+  }
+
+  /// Removes the production log of [date]; a shipment logged in the same record is kept.
+  Future<void> deleteLog(String date) async {
+    final day = logOn(date);
+    if (day == null || day.id.isEmpty) return;
+    final rest = _withoutLog(day);
+    rest.isEmpty ? await deleteDay(day.id) : await saveDay(rest);
+  }
+
+  /// Saves the machine's total counter read on [date], and whether it was reset before the reading.
+  /// Only the machine reading changes: the day's printed count, target and note stay as they are.
+  /// A null [total] removes the reading.
+  Future<void> saveMachineReading({required String date, required int? total, bool reset = false}) async {
+    final existing = logOn(date);
+    if (existing == null && total == null) return;
+    final day = (existing ?? Day(date: date)).copyWith(total: () => total, totalReset: total != null && reset);
+    if (day.isEmpty) {
+      if (day.id.isNotEmpty) await deleteDay(day.id);
+    } else {
+      await saveDay(day);
+    }
+  }
+
   Future<void> setLowStock(int? value) async {
     _lowStock = value;
+    await _saveSettings();
+    _changes.add(null);
+  }
+
+  /// Working days needed to get new lids after ordering (at least 1).
+  Future<void> setLidLeadTime(int days) async {
+    _lidLeadTime = days < 1 ? 1 : days;
+    await _saveSettings();
+    _changes.add(null);
+  }
+
+  /// Low-stock notification: on or off, and the time of day (minutes after midnight).
+  Future<void> setLidNotify({required bool on, int? minutes}) async {
+    _lidNotify = on;
+    if (minutes != null) _lidNotifyAt = minutes;
     await _saveSettings();
     _changes.add(null);
   }
@@ -407,43 +692,6 @@ class TrackerRepository {
   Future<void> deleteStockMove(int ts) async {
     await _stock.delete(ts.toString());
     _stockMoves.removeWhere((m) => m.ts == ts);
-    _changes.add(null);
-  }
-
-  /// Adds a printer counter reading for production day [date], or replaces the one with the same id,
-  /// then refills the Daily log counters it affects.
-  Future<void> savePrinterReading({String? id, required DateTime date, required int value, bool reset = false, String note = ''}) async {
-    final reading = PrinterReading(
-      id: id ?? _newId(),
-      ts: id == null ? DateTime.now().millisecondsSinceEpoch : _readings.firstWhere((p) => p.id == id).ts,
-      date: ymd(date),
-      value: value,
-      reset: reset,
-      note: note,
-    );
-    _readings = [..._readings.where((p) => p.id != reading.id), reading];
-    await _printer.put(reading.id, reading.toMap());
-    await _syncPrinterDays();
-  }
-
-  Future<void> deletePrinterReading(String id) async {
-    _readings = _readings.where((p) => p.id != id).toList();
-    await _printer.delete(id);
-    await _syncPrinterDays();
-  }
-
-  /// Printer readings fill the Daily log: each production day with printed codes gets that amount as its
-  /// counter (marked as from the printer). A day filled earlier that no longer has any is cleared.
-  Future<void> _syncPrinterDays() async {
-    final byDay = printedByDay(printerSteps(_readings));
-    for (final MapEntry(key: date, value: printed) in byDay.entries) {
-      final day = entryOn(date) ?? Day(date: date);
-      if (day.counter != printed || !day.fromPrinter) await saveDay(day.copyWith(counter: () => printed, fromPrinter: true));
-    }
-    for (final day in _entryMap.values.where((d) => d.fromPrinter && !byDay.containsKey(d.date)).toList()) {
-      final cleared = day.copyWith(counter: () => null, fromPrinter: false);
-      cleared.isEmpty ? await deleteDay(day.id) : await saveDay(cleared);
-    }
     _changes.add(null);
   }
 
@@ -492,10 +740,12 @@ class TrackerRepository {
       await _archive.put(list.id, list.toMap());
     }
     _load();
+    await _migrateLog();
   }
 
   Future<void> resetAll() async {
     await Future.wait([_kv.clear(), _days.clear(), _scans.clear(), _stock.clear(), _printer.clear(), _archive.clear()]);
     _load();
+    await _migrateLog();
   }
 }

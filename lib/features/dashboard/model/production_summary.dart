@@ -17,7 +17,7 @@ class SummaryDay {
 class ProductionSummary {
   const ProductionSummary({required this.from, required this.to, required this.days});
 
-  factory ProductionSummary.compute({required Iterable<Day> days, required int? defaultTarget, required DateTime from, required DateTime to}) {
+  factory ProductionSummary.compute({required Iterable<Day> days, required int? Function(Day day) targetFor, required DateTime from, required DateTime to}) {
     final start = ymd(from);
     final end = ymd(to);
     final inRange = days.where((d) => d.counter != null && d.date.compareTo(start) >= 0 && d.date.compareTo(end) <= 0).toList()
@@ -25,7 +25,7 @@ class ProductionSummary {
     return ProductionSummary(
       from: from,
       to: to,
-      days: [for (final d in inRange) SummaryDay(date: DateTime.parse(d.date), printed: d.counter!, target: d.target ?? defaultTarget)],
+      days: [for (final d in inRange) SummaryDay(date: DateTime.parse(d.date), printed: d.counter!, target: targetFor(d))],
     );
   }
 

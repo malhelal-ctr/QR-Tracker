@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:intl/intl.dart';
 
 import '../../../core/data/models.dart';
 import '../../../core/data/tracker_repository.dart';
@@ -10,6 +11,7 @@ import '../../../core/widgets/adaptive_layout.dart';
 import '../../../core/widgets/app_widgets.dart';
 import '../../../core/widgets/product_field.dart';
 import '../../products/screen/products_screen.dart';
+import '../../work_calendar/screen/work_calendar_screen.dart';
 import '../cubit/data_cubit.dart';
 import '../model/data_state.dart';
 import '../widget/action_row.dart';
@@ -103,6 +105,14 @@ class _DataView extends StatelessWidget {
     );
   }
 
+  /// "Weekend Fri, Sat · 3 holidays".
+  String _workDaysSummary(TrackerRepository repository) {
+    final weekend = repository.weekend.toList()..sort();
+    final names = [for (final w in weekend) DateFormat.E().format(DateTime(2024, 1, w))]; // 2024-01-01 is a Monday
+    final holidays = groupHolidays(repository.holidays).length;
+    return '${names.isEmpty ? 'No weekend set' : 'Weekend ${names.join(', ')}'} · $holidays ${holidays == 1 ? 'holiday' : 'holidays'}';
+  }
+
   Future<void> _pickPeriodEnd(BuildContext context, DataState state) async {
     final cubit = context.read<DataCubit>();
     final d = await showDatePicker(
@@ -172,6 +182,15 @@ class _DataView extends StatelessWidget {
               title: 'Manage products',
               subtitle: '${fmt(state.products.length)} products: add, rename and see totals',
               onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ProductsScreen())),
+              standalone: true,
+            ),
+            SizedBox(height: 8.r),
+            const SectionTitle('Working days', icon: Icons.event_busy_outlined, upper: true),
+            ActionRow(
+              icon: Icons.weekend_outlined,
+              title: 'Weekend & holidays',
+              subtitle: _workDaysSummary(context.read<TrackerRepository>()),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WorkCalendarScreen())),
               standalone: true,
             ),
             SizedBox(height: 8.r),

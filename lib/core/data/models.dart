@@ -136,7 +136,7 @@ class StockMove {
 /// One log record: what was printed / targeted / shipped on [date]. Stored under [id], so a date can
 /// have several records; [Day.mergeByDate] adds them up into one per date for totals and charts.
 class Day {
-  const Day({this.id = '', required this.date, this.target, this.counter, this.counterAt, this.shipped, this.note = '', this.scanPos, this.fromPrinter = false, this.product = ''});
+  const Day({this.id = '', required this.date, this.target, this.counter, this.counterAt, this.shipped, this.note = '', this.scanPos, this.fromPrinter = false, this.product = '', this.total, this.totalReset = false});
 
   factory Day.fromMap(Map m) => Day(
         id: (m['id'] as String?) ?? '',
@@ -149,6 +149,8 @@ class Day {
         scanPos: m['scanPos'] as int?,
         fromPrinter: (m['fromPrinter'] as bool?) ?? false,
         product: (m['product'] as String?) ?? '',
+        total: m['total'] as int?,
+        totalReset: (m['totalReset'] as bool?) ?? false,
       );
 
   /// Storage key; empty until the record is first saved (and in older data, until it is migrated).
@@ -173,10 +175,31 @@ class Day {
   /// Product printed in this record; empty when none was set.
   final String product;
 
-  /// True when nothing is logged in the record.
-  bool get isEmpty => target == null && counter == null && shipped == null && note.isEmpty;
+  /// The machine's total counter (it never resets), read when the day was logged; null when not read.
+  final int? total;
 
-  Day copyWith({String? id, int? Function()? target, int? Function()? counter, int? Function()? counterAt, int? Function()? shipped, String? note, int? Function()? scanPos, bool? fromPrinter, String? product}) => Day(
+  /// The machine total was reset before [total] was read, so it isn't checked against the day before.
+  final bool totalReset;
+
+  /// True when nothing is logged in the record.
+  bool get isEmpty => target == null && counter == null && shipped == null && note.isEmpty && total == null;
+
+  /// True when the record holds a production log, not only a shipment.
+  bool get hasLog => counter != null || target != null || note.isNotEmpty || total != null;
+
+  Day copyWith({
+    String? id,
+    int? Function()? target,
+    int? Function()? counter,
+    int? Function()? counterAt,
+    int? Function()? shipped,
+    String? note,
+    int? Function()? scanPos,
+    bool? fromPrinter,
+    String? product,
+    int? Function()? total,
+    bool? totalReset,
+  }) => Day(
         id: id ?? this.id,
         date: date,
         target: target == null ? this.target : target(),
@@ -187,12 +210,28 @@ class Day {
         scanPos: scanPos == null ? this.scanPos : scanPos(),
         fromPrinter: fromPrinter ?? this.fromPrinter,
         product: product ?? this.product,
+        total: total == null ? this.total : total(),
+        totalReset: totalReset ?? this.totalReset,
       );
 
-  Map<String, dynamic> toMap() => {'id': id, 'date': date, 'target': target, 'counter': counter, 'counterAt': counterAt, 'shipped': shipped, 'note': note, 'scanPos': scanPos, 'fromPrinter': fromPrinter, 'product': product};
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'date': date,
+        'target': target,
+        'counter': counter,
+        'counterAt': counterAt,
+        'shipped': shipped,
+        'note': note,
+        'scanPos': scanPos,
+        'fromPrinter': fromPrinter,
+        'product': product,
+        'total': total,
+        'totalReset': totalReset,
+      };
 
-  /// One [Day] per date from records in creation order: counters and shipments add up, the latest target wins,
-  /// notes are joined, [counterAt] is the earliest and [scanPos] the furthest. The merged day keeps the first record's id.
+  /// One [Day] per date from records in creation order: counters and shipments add up, the latest target and
+  /// machine total win, notes are joined, [counterAt] is the earliest and [scanPos] the furthest.
+  /// The merged day keeps the first record's id.
   static Map<String, Day> mergeByDate(Iterable<Day> records) {
     int? sum(int? a, int? b) => a == null ? b : (b == null ? a : a + b);
     final merged = <String, Day>{};
@@ -209,6 +248,8 @@ class Day {
               scanPos: () => [m.scanPos, r.scanPos].nonNulls.fold<int?>(null, (a, p) => a == null || p > a ? p : a),
               fromPrinter: m.fromPrinter || r.fromPrinter,
               product: m.product.isEmpty ? r.product : m.product,
+              total: () => r.total ?? m.total,
+              totalReset: m.totalReset || r.totalReset,
             );
     }
     return merged;

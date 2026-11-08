@@ -12,6 +12,7 @@ import '../cubit/stock_cubit.dart';
 import '../model/stock_state.dart';
 import '../widget/low_stock_card.dart';
 import '../widget/movement_form.dart';
+import '../widget/run_out_card.dart';
 import '../widget/stock_history_row.dart';
 import '../widget/stock_level_card.dart';
 
@@ -40,6 +41,7 @@ class _StockView extends StatelessWidget {
           stackGap: 24.r,
           left: [
             StockLevelCard(stats: state.stats),
+            if (state.stats.forecast case final forecast?) RunOutCard(forecast: forecast),
             MovementForm(
               type: state.type,
               date: state.date,
@@ -59,7 +61,15 @@ class _StockView extends StatelessWidget {
                 return error == null;
               },
             ),
-            LowStockCard(lowStock: state.stats.lowStock, onChanged: cubit.setLowStock),
+            LowStockCard(
+              leadTime: state.leadTime,
+              notify: state.notify,
+              notifyAt: state.notifyAt,
+              lowStock: state.stats.lowStock,
+              onLeadTime: cubit.setLeadTime,
+              onNotify: cubit.setNotify,
+              onLowStock: cubit.setLowStock,
+            ),
           ],
           right: [
             HistoryHeader(count: state.history.length, title: 'Stock log'),

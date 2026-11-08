@@ -1,3 +1,4 @@
+import '../utils/format.dart';
 import 'models.dart';
 
 /// Where a scan log's starting point comes from.
@@ -13,29 +14,61 @@ enum BaselineSource {
 }
 
 /// Where the machine stood when a production day began; a scan log's counter is measured from it.
+/// It is the last known position ([anchorPos]: a scan log, a scan, or the list start) plus the printed
+/// counts logged by hand for the days after it ([logged]), so a day typed in between isn't counted twice.
 class ScanBaseline {
-  const ScanBaseline({required this.pos, required this.source, this.at});
+  const ScanBaseline({required this.anchorPos, required this.source, this.at, this.logged = 0, this.loggedDays = 0});
 
-  /// 0 for [BaselineSource.listStart].
-  final int pos;
+  /// Position of the last scan log / scan; 0 for [BaselineSource.listStart].
+  final int anchorPos;
   final BaselineSource source;
 
   /// The earlier log's production day, or the time of the earlier scan; null for the list start.
   final DateTime? at;
+
+  /// Printed counts logged for the days between the anchor and the production day, and how many days.
+  final int logged;
+  final int loggedDays;
+
+  /// Where the machine stood when the production day began.
+  int get pos => anchorPos + logged;
 }
 
 /// Baseline for logging [date] (yyyy-MM-dd) by scan: the position saved with the latest scan log
-/// for an earlier day, else the highest code scanned before [date] began, else the start of the list.
-ScanBaseline scanBaseline({required String date, required Iterable<Day> days, required Iterable<Scan> scans}) {
+/// for an earlier day, else the highest code scanned before [date] began, else the start of the list;
+/// plus the printed counts logged for the days after that and before [date]. [listStart] (yyyy-MM-dd,
+/// the list's import day) leaves out days logged before the list was in use.
+ScanBaseline scanBaseline({required String date, required Iterable<Day> days, required Iterable<Scan> scans, String? listStart}) {
+  ({int sum, int count}) loggedAfter(String? after) {
+    var sum = 0, count = 0;
+    for (final d in days) {
+      if (d.counter == null || d.date.compareTo(date) >= 0) continue;
+      if (after != null && d.date.compareTo(after) <= 0) continue;
+      if (listStart != null && d.date.compareTo(listStart) < 0) continue;
+      sum += d.counter!;
+      count++;
+    }
+    return (sum: sum, count: count);
+  }
+
   final log = days.where((d) => d.scanPos != null && d.date.compareTo(date) < 0).fold<Day?>(null, (a, d) => a == null || d.date.compareTo(a.date) > 0 ? d : a);
-  if (log != null) return ScanBaseline(pos: log.scanPos!, source: BaselineSource.log, at: DateTime.parse(log.date));
+  if (log != null) {
+    final since = loggedAfter(log.date);
+    return ScanBaseline(anchorPos: log.scanPos!, source: BaselineSource.log, at: DateTime.parse(log.date), logged: since.sum, loggedDays: since.count);
+  }
 
   final start = DateTime.parse(date).millisecondsSinceEpoch;
   final scan = scans.where((s) => s.pos != null && s.ts < start).fold<Scan?>(null, (a, s) => a == null || s.pos! > a.pos! ? s : a);
-  if (scan != null) return ScanBaseline(pos: scan.pos!, source: BaselineSource.scan, at: DateTime.fromMillisecondsSinceEpoch(scan.ts));
+  if (scan != null) {
+    final at = DateTime.fromMillisecondsSinceEpoch(scan.ts);
+    // the scan's own day is left out: how much of it was printed after the scan isn't known
+    final since = loggedAfter(ymd(at));
+    return ScanBaseline(anchorPos: scan.pos!, source: BaselineSource.scan, at: at, logged: since.sum, loggedDays: since.count);
+  }
 
   // positions are 1-based, so code #N means N codes printed from the start of the list
-  return const ScanBaseline(pos: 0, source: BaselineSource.listStart);
+  final since = loggedAfter(null);
+  return ScanBaseline(anchorPos: 0, source: BaselineSource.listStart, logged: since.sum, loggedDays: since.count);
 }
 
 /// A code scanned for Log by scan, before the counter is confirmed.

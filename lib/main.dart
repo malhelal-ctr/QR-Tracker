@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:sizer/sizer.dart';
 
 import 'core/data/tracker_repository.dart';
+import 'core/notify/lid_notifier.dart';
 import 'core/theme/app_theme.dart';
 import 'features/main/widget/main_shell.dart';
 
@@ -10,6 +13,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final repository = TrackerRepository();
   await repository.init();
+  // low-stock reminders; not awaited so the app opens straight away
+  unawaited(LidNotifier(repository).start());
   runApp(QrTrackerApp(repository: repository));
 }
 

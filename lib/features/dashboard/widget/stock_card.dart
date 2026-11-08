@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
+import '../../../core/data/lid_forecast.dart';
 import '../../../core/data/stock_stats.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
@@ -37,11 +39,20 @@ class StockCard extends StatelessWidget {
             Pair(
               Metric(label: 'On hand', value: fmt(s.onHand), unit: 'lids', valueColor: s.isLow || s.onHand < 0 ? C.danger : null),
               Metric(
-                label: 'Days of cover',
-                value: s.daysOfCover == null ? '—' : fmt(s.daysOfCover!.clamp(0, 1 << 30)),
-                unit: s.daysOfCover == null ? null : 'days',
-                caption: s.shortfall > 0 ? 'Short ${fmt(s.shortfall)} for the list' : 'Enough for the list',
-                captionColor: s.shortfall > 0 ? C.danger : C.success,
+                label: 'Runs out',
+                value: switch (s.forecast) {
+                  final f? when f.onHand <= 0 => 'Out',
+                  LidForecast(runOut: final d?) => DateFormat('EEE d MMM').format(d),
+                  _ => '—',
+                },
+                valueColor: s.isLow ? C.danger : null,
+                caption: switch (s.forecast) {
+                  LidForecast(average: null) => 'Log printed counts to see this',
+                  final f? when f.needsOrder => 'Order now',
+                  LidForecast(orderBy: final d?) => 'Order by ${fmtDate(d)}',
+                  _ => s.shortfall > 0 ? 'Short ${fmt(s.shortfall)} for the list' : 'Enough for the list',
+                },
+                captionColor: s.isLow ? C.danger : null,
               ),
             ),
           SizedBox(height: 12.r),

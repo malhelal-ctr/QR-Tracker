@@ -32,7 +32,7 @@ class ResultCard extends StatelessWidget {
               SizedBox(width: 8.r),
               Expanded(child: Text('MACHINE IS AT', style: sans(17, weight: FontWeight.w700, spacing: 0.8))),
               // the time changes with every scan, so a new read is easy to tell from the last one
-              Text(fmtClock(result.scan.ts), style: mono(13, weight: FontWeight.w600, color: C.onVariant)),
+              Text(fmtStamp(result.scan.ts), style: mono(13, weight: FontWeight.w600, color: C.onVariant)),
               SizedBox(width: 8.r),
               const Pill('IN LIST', kind: PillKind.success, icon: Icons.check),
             ]),

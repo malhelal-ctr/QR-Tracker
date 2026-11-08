@@ -3,10 +3,14 @@ import 'package:qr_tracker/core/data/models.dart';
 import 'package:qr_tracker/core/data/product_stats.dart';
 import 'package:qr_tracker/core/data/progress_stats.dart';
 import 'package:qr_tracker/core/data/stock_stats.dart';
+import 'package:qr_tracker/core/data/month_plan.dart';
+import 'package:qr_tracker/core/utils/format.dart';
 import 'package:qr_tracker/features/daily_log/model/daily_log_state.dart';
-import 'package:qr_tracker/features/daily_log/widget/editing_banner.dart';
-import 'package:qr_tracker/features/daily_log/widget/log_tabs.dart';
-import 'package:qr_tracker/features/daily_log/widget/suggestion_row.dart';
+import 'package:qr_tracker/features/daily_log/widget/log_entry_panel.dart';
+import 'package:qr_tracker/features/daily_log/widget/month_bar.dart';
+import 'package:qr_tracker/features/daily_log/widget/month_calendar.dart';
+import 'package:qr_tracker/features/daily_log/widget/month_header.dart';
+import 'package:qr_tracker/features/daily_log/widget/month_table.dart';
 import 'package:qr_tracker/features/dashboard/widget/empty_list_card.dart';
 import 'package:qr_tracker/features/dashboard/widget/plan_card.dart';
 import 'package:qr_tracker/features/dashboard/widget/position_card.dart';
@@ -20,6 +24,30 @@ import 'package:qr_tracker/features/products/widget/product_row.dart';
 import 'package:widgetbook/widgetbook.dart';
 
 void _tap() {}
+
+/// This month logged up to yesterday at around the daily target, with one missing day, Fridays off
+/// and machine totals (one that doesn't match).
+MonthSummary _month(BuildContext context) {
+  final daily = context.knobs.int.input(label: 'Daily target', initialValue: 12000);
+  final now = DateTime.now();
+  final days = <String, Day>{};
+  var total = 1300000;
+  for (var i = 1; i < now.day; i++) {
+    final date = DateTime(now.year, now.month, i);
+    if (date.weekday == DateTime.friday || i == 3) continue;
+    final printed = daily + (i * 937 % 3000) - 1500;
+    total += printed + (i == 6 ? 800 : 0);
+    days[ymd(date)] = Day(id: '$i', date: ymd(date), counter: printed, total: total, product: 'Cover Coat', note: i == 4 ? 'Maintenance 14:00' : '');
+  }
+  final before = ymd(DateTime(now.year, now.month, 0)); // last day of the month before: the starting total
+  days[before] = Day(id: '0', date: before, total: 1300000);
+  return MonthSummary.compute(
+    month: now,
+    days: days,
+    dailyTarget: daily,
+    isOff: (d) => DateTime.parse(d).weekday == DateTime.friday,
+  );
+}
 
 /// Progress for a 50,000-code list, driven by knobs so each dashboard card can be pushed into its edge cases.
 ProgressStats _progress(BuildContext context) {
@@ -109,26 +137,50 @@ final featureUseCases = <WidgetbookNode>[
     ]),
   ]),
   WidgetbookFolder(name: 'Daily log', children: [
-    WidgetbookComponent(name: 'LogTabs', useCases: [
+    WidgetbookComponent(name: 'MonthBar', useCases: [
       WidgetbookUseCase(
         name: 'Default',
-        builder: (context) => LogTabs(
-          tab: context.knobs.object.dropdown(label: 'Tab', options: LogTab.values, labelBuilder: (t) => t.name),
-          historyCount: context.knobs.int.slider(label: 'History count', initialValue: 12, max: 100),
-          onChanged: (_) {},
+        builder: (context) => MonthBar(
+          month: DateTime.now(),
+          view: context.knobs.object.dropdown(label: 'View', options: LogView.values, labelBuilder: (v) => v.name),
+          onPrevious: _tap,
+          onNext: _tap,
+          onPick: (_) {},
+          onView: (_) {},
         ),
       ),
     ]),
-    WidgetbookComponent(name: 'EditingBanner', useCases: [
+    WidgetbookComponent(name: 'MonthHeader', useCases: [
       WidgetbookUseCase(
         name: 'Default',
-        builder: (context) => EditingBanner(date: context.knobs.string(label: 'Date', initialValue: '2026-10-27'), onNewEntry: _tap),
+        builder: (context) => MonthHeader(summary: _month(context), ownTarget: context.knobs.boolean(label: 'Own target', initialValue: true), onEditTarget: _tap),
       ),
     ]),
-    WidgetbookComponent(name: 'SuggestionRow', useCases: [
+    WidgetbookComponent(name: 'MonthCalendar', useCases: [
+      WidgetbookUseCase(name: 'Default', builder: (context) => MonthCalendar(summary: _month(context), onTap: (_) {}, onToggleOff: (_, _) {})),
+    ]),
+    WidgetbookComponent(name: 'MonthTable', useCases: [
+      WidgetbookUseCase(name: 'Default', builder: (context) => MonthTable(summary: _month(context), onTap: (_) {})),
+    ]),
+    WidgetbookComponent(name: 'LogEntryPanel', useCases: [
       WidgetbookUseCase(
-        name: 'Default',
-        builder: (context) => SuggestionRow(suggested: context.knobs.int.input(label: 'Suggested', initialValue: 1755), onUse: _tap),
+        name: 'New log',
+        builder: (context) => LogEntryPanel(
+          entry: LogEntry(
+            date: ymd(DateTime.now()),
+            previousTotal: context.knobs.intOrNull.input(label: 'Previous total', initialValue: 1470500),
+            previousTotalDate: ymd(DateTime.now().subtract(const Duration(days: 1))),
+            monthTarget: 12000,
+            product: 'Cover Coat',
+          ),
+          products: const ['Cover Coat'],
+          onSave: (_) async {},
+          onDelete: () async {},
+          onDate: (_) {},
+          onOffChanged: (_) {},
+          onClose: _tap,
+          onScan: _tap,
+        ),
       ),
     ]),
   ]),

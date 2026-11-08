@@ -5,6 +5,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
 import '../../../core/utils/responsive.dart';
 import '../../../core/widgets/app_widgets.dart';
+import 'run_out_card.dart';
 
 /// Lids in stock now, how long they last, and whether they cover the rest of the QR list.
 class StockLevelCard extends StatelessWidget {
@@ -38,7 +39,7 @@ class StockLevelCard extends StatelessWidget {
               if (!s.hasData)
                 const Pill('NOT SET UP')
               else if (s.isLow)
-                const Pill('LOW STOCK', kind: PillKind.danger, icon: Icons.warning_amber_rounded)
+                Pill(s.forecast?.needsOrder ?? false ? lidStatusLook(s.forecast!.status!).$1 : 'LOW STOCK', kind: PillKind.danger, icon: Icons.warning_amber_rounded)
               else
                 const Pill('IN STOCK', kind: PillKind.success, icon: Icons.check_circle_outline),
             ],
@@ -70,12 +71,16 @@ class StockLevelCard extends StatelessWidget {
           SizedBox(height: 16.r),
           Pair(
             Metric(
-              label: 'Days of cover',
+              label: 'Working days left',
               icon: Icons.hourglass_bottom,
-              value: s.daysOfCover == null ? '—' : fmt(s.daysOfCover!.clamp(0, 1 << 30)),
-              unit: s.daysOfCover == null ? null : 'days',
-              caption: s.coverUntil == null ? 'Log counters to see this' : 'Until ${fmtDate(s.coverUntil!)}',
-              valueColor: s.daysOfCover != null && s.daysOfCover! <= 2 ? C.danger : null,
+              value: s.forecast?.daysLeft == null ? '—' : fmtDays(s.forecast!.daysLeft!.clamp(0, 9999).toDouble()),
+              unit: s.forecast?.daysLeft == null ? null : 'days',
+              caption: switch (s.forecast?.runOut) {
+                final d? => 'Runs out ${fmtDate(d)}',
+                _ when s.forecast?.daysLeft != null => 'Over a year of lids',
+                _ => 'Log printed counts to see this',
+              },
+              valueColor: s.isLow ? C.danger : null,
             ),
             !s.hasData
                 ? const Metric(label: 'For the QR list', icon: Icons.fact_check_outlined, value: '—', caption: 'Add stock to compare')

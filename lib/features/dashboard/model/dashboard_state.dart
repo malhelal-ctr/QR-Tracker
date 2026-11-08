@@ -22,7 +22,7 @@ class DashboardState {
         product: repository.product,
         stats: repository.progress,
         stock: repository.stock,
-        summary: ProductionSummary.compute(days: repository.days.values, defaultTarget: repository.defaultTarget, from: from, to: to),
+        summary: ProductionSummary.compute(days: repository.days.values, targetFor: repository.targetFor, from: from, to: to),
         preset: preset,
       );
 

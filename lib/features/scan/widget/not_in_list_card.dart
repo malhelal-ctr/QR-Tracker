@@ -21,7 +21,7 @@ class NotInListCard extends StatelessWidget {
               Icon(Icons.warning_amber_rounded, color: C.onDangerContainer, size: 30.r),
               SizedBox(width: 10.r),
               Expanded(child: Text('Not in the list', style: sans(22, weight: FontWeight.w700, color: C.onDangerContainer))),
-              Text(fmtClock(scannedAt), style: mono(13, weight: FontWeight.w600, color: C.onDangerContainer)),
+              Text(fmtStamp(scannedAt), style: mono(13, weight: FontWeight.w600, color: C.onDangerContainer)),
             ]),
             SizedBox(height: 8.r),
             Text('This code is not in the imported QR list. Check that you imported the right file.', style: sans(15, color: C.onDangerContainer)),

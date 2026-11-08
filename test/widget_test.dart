@@ -18,8 +18,12 @@ import 'package:qr_tracker/core/utils/file_io.dart';
 import 'package:qr_tracker/core/utils/format.dart';
 import 'package:qr_tracker/core/utils/period.dart';
 import 'package:qr_tracker/features/dashboard/model/production_summary.dart';
-import 'package:qr_tracker/features/daily_log/model/daily_log_state.dart';
+import 'package:qr_tracker/core/data/lid_forecast.dart';
+import 'package:qr_tracker/core/data/month_plan.dart';
+import 'package:qr_tracker/core/notify/lid_notifier.dart';
 import 'package:qr_tracker/features/data/model/import_preview.dart';
+import 'package:qr_tracker/features/scan/cubit/scan_cubit.dart';
+import 'package:qr_tracker/features/work_calendar/screen/work_calendar_screen.dart';
 import 'package:qr_tracker/features/scan/model/camera_issue.dart';
 
 void main() {
@@ -117,7 +121,7 @@ void main() {
     ];
 
     test('totals for a range, using each day\'s own target or the default', () {
-      final s = ProductionSummary.compute(days: days, defaultTarget: 8000, from: DateTime(2026, 10, 19), to: DateTime(2026, 10, 22));
+      final s = ProductionSummary.compute(days: days, targetFor: (d) => d.target ?? 8000, from: DateTime(2026, 10, 19), to: DateTime(2026, 10, 22));
       expect(s.days.length, 3);
       expect(s.printed, 6385 + 4956 + 7568);
       expect(s.target, 8000 + 5000 + 8000);
@@ -221,27 +225,99 @@ void main() {
     });
   });
 
-  test('DailyLogState: recent days, date filter and its totals', () {
-    final history = [
-      const Day(date: '2026-10-25', counter: 9000),
-      const Day(date: '2026-10-24', counter: 7000, target: 6000),
-      const Day(date: '2026-10-20', note: 'maintenance'),
-      const Day(date: '2026-09-30', counter: 5000),
-    ];
-    final s = DailyLogState(
-      date: DateTime(2026, 10, 25),
-      history: history,
-      defaultTarget: 8000,
-      from: DateTime(2026, 10, 1),
-      to: DateTime(2026, 10, 25),
+  group('Lid forecast', () {
+    // Fridays and Saturdays off
+    bool weekend(String d) => DateTime.parse(d).weekday == DateTime.friday || DateTime.parse(d).weekday == DateTime.saturday;
+    final wed = DateTime(2026, 11, 11, 10);
+
+    test('workingDayAverage leaves out days off', () {
+      final avg = workingDayAverage(
+        days: const [Day(date: '2026-11-09', counter: 6000), Day(date: '2026-11-06', counter: 1000), Day(date: '2026-11-05', counter: 8000)],
+        isOff: weekend,
+        today: wed,
+      );
+      expect(avg, 7000); // the Friday's 1,000 isn't counted
+    });
+
+    test('20,000 lids at 6,000 a day from Wednesday: run out Monday, order by Thursday', () {
+      final f = LidForecast.compute(onHand: 20000, average: 6000, isOff: weekend, leadTime: 2, bestRate: 12000, now: wed);
+      expect(f.runOut, DateTime(2026, 11, 16)); // Wed, Thu, (Fri, Sat off), Sun covered
+      expect((f.fullDaysLeft, f.orderBy, f.status), (3, DateTime(2026, 11, 12), LidStatus.ok));
+      expect(f.daysLeft!.toStringAsFixed(2), '3.33');
+      expect(f.bestRunOut, DateTime(2026, 11, 12)); // best case at the target
+      expect(f.timeline.map((d) => d.left).take(6), [14000, 8000, 8000, 8000, 2000, 0]);
+      expect(f.leftAtStartOf(DateTime(2026, 11, 15)), 8000);
+    });
+
+    test('status: low within the lead time, then critical, then out', () {
+      LidStatus? status(int onHand) => LidForecast.compute(onHand: onHand, average: 6000, isOff: weekend, leadTime: 2, now: wed).status;
+      expect(status(14000), LidStatus.low); // 2 full working days
+      expect(status(6000), LidStatus.critical);
+      expect(status(0), LidStatus.out);
+      // today already logged: the forecast starts tomorrow
+      final f = LidForecast.compute(onHand: 20000, average: 6000, isOff: weekend, leadTime: 2, todayLogged: true, now: wed);
+      expect((f.start, f.runOut), (DateTime(2026, 11, 12), DateTime(2026, 11, 17)));
+    });
+
+    test('notifications: working days from the order-by day; straight away once low', () {
+      StockStats stock(int onHand) => StockStats(hasData: true, onHand: onHand, usedSinceCount: 0, received: 0, wasted: 0)
+          .withForecast(LidForecast.compute(onHand: onHand, average: 6000, isOff: weekend, leadTime: 2, now: wed));
+      final ahead = plannedLidAlerts(stock: stock(20000), isOff: weekend, notifyAt: 8 * 60, now: wed, max: 3);
+      expect(ahead.map((a) => a.at), [DateTime(2026, 11, 12, 8), DateTime(2026, 11, 15, 8), DateTime(2026, 11, 16, 8)]);
+      expect(ahead.first.body, startsWith('14,000 lids left, runs out Mon, Nov 16'));
+
+      // low already: the first one is today (its time has passed, so it is shown at once)
+      final low = plannedLidAlerts(stock: stock(14000), isOff: weekend, notifyAt: 8 * 60, now: wed, max: 2);
+      expect(low.first.at, DateTime(2026, 11, 11, 8));
+      expect(plannedLidAlerts(stock: StockStats(hasData: false, onHand: 0, usedSinceCount: 0, received: 0, wasted: 0), isOff: weekend, notifyAt: 480, now: wed), isEmpty);
+    });
+  });
+
+  test('monthDailyTarget: own month, else copied from the latest earlier month, else the fallback', () {
+    const targets = {'2026-09': 9000, '2026-11': 12000};
+    expect(monthDailyTarget('2026-09', targets), 9000);
+    expect(monthDailyTarget('2026-10', targets), 9000);
+    expect(monthDailyTarget('2027-01', targets), 12000);
+    expect(monthDailyTarget('2026-08', targets, fallback: 7000), 7000);
+  });
+
+  test('totalGap: machine total against the previous total + printed', () {
+    expect(totalGap(previousTotal: 1000, printed: 200, total: 1200), 0);
+    expect(totalGap(previousTotal: 1000, printed: 200, total: 1250), 50);
+    expect(totalGap(previousTotal: 1000, printed: 200, total: 300, reset: true), isNull);
+    expect(totalGap(previousTotal: null, printed: 200, total: 1200), isNull);
+  });
+
+  test('MonthSummary: per-day miss, running month miss, plan from here and the machine check', () {
+    final days = {
+      for (final d in const [
+        Day(date: '2026-09-30', total: 1000000), // starting machine total
+        Day(date: '2026-10-01', counter: 11000, total: 1011000), // +1000, total matches
+        // 10-02 is a day off
+        Day(date: '2026-10-03', counter: 9000, target: 8000, total: 1021000), // own target: +1000; total 1000 too high
+        // 10-04 not logged: a miss of the whole target
+        Day(date: '2026-10-05', counter: 7000), // −3000, no total
+      ])
+        d.date: d,
+    };
+    final s = MonthSummary.compute(
+      month: DateTime(2026, 10, 15),
+      days: days,
+      dailyTarget: 10000,
+      isOff: (d) => d == '2026-10-02',
+      now: DateTime(2026, 10, 6, 12), // today not logged yet: not counted
     );
-    expect(s.filtered.map((d) => d.date), ['2026-10-25', '2026-10-24', '2026-10-20']);
-    final sum = s.summary;
-    expect(sum.printed, 16000);
-    expect(sum.logged, 2); // the note-only day has no counter
-    expect(sum.avg, 8000);
-    expect((sum.met, sum.withTarget), (2, 2)); // 9000 ≥ 8000 default, 7000 ≥ 6000 own target
-    expect(s.recent.length, 4);
+    expect(s.days.length, 31);
+    expect(s.days.map((d) => d.diff).take(6), [1000, null, 1000, -10000, -3000, null]);
+    expect(s.days.map((d) => d.runningDiff).take(6), [1000, 1000, 2000, -8000, -11000, null]);
+    expect(s.days.map((d) => d.gap).take(3), [0, null, 1000]);
+    expect((s.workingDays, s.monthTarget, s.printed), (30, 29 * 10000 + 8000, 27000));
+    expect((s.targetSoFar, s.missSoFar), (38000, -11000));
+    expect((s.workingDaysLeft, s.neededPerDay), (26, 10424)); // (298,000 − 27,000) / 26 days
+    expect((s.daysOnTarget, s.workingDaysSoFar, s.missingDays, s.totalWarnings), (2, 4, 1, 1));
+    expect(s.worstDay!.key, '2026-10-04');
+    expect((s.machinePrinted, s.machineLogged, s.unaccounted), (21000, 20000, 1000));
+    expect(s.isPast, isFalse);
   });
 
   test('Day.mergeByDate: records on one date add up, latest target wins, notes join', () {
@@ -256,20 +332,6 @@ void main() {
     expect(merged['2026-10-24']!.counter, 7000);
   });
 
-  test('DailyLogState summary counts several records on one date as one day', () {
-    final s = DailyLogState(
-      date: DateTime(2026, 10, 25),
-      history: const [
-        Day(id: '2', date: '2026-10-25', counter: 4500),
-        Day(id: '1', date: '2026-10-25', counter: 3000),
-      ],
-      defaultTarget: 7000,
-      from: DateTime(2026, 10, 1),
-      to: DateTime(2026, 10, 25),
-    );
-    final sum = s.summary;
-    expect((sum.printed, sum.logged, sum.avg, sum.met, sum.withTarget), (7500, 1, 7500, 1, 1));
-  });
 
   test('TrackerRepository moves date-keyed days to ids, then saves and deletes by id', () async {
     final dir = await Directory.systemTemp.createTemp('qr_tracker_test');
@@ -346,6 +408,32 @@ void main() {
     expect((hand.behind, hand.counter, hand.lowersLogged), (false, 15, true));
   });
 
+  test('scanBaseline adds the printed counts logged by hand since the last scan log', () {
+    // Mon logged by scan at #50,000; Tue and Wed typed by hand; Thu scanned at #66,000
+    const days = [
+      Day(date: '2026-10-25', counter: 9000), // before the list was imported: not counted
+      Day(date: '2026-10-26', counter: 5000, scanPos: 50000),
+      Day(date: '2026-10-27', counter: 8000),
+      Day(date: '2026-10-28', counter: 4000),
+    ];
+    final b = scanBaseline(date: '2026-10-29', days: days, scans: const [], listStart: '2026-10-20');
+    expect((b.source, b.anchorPos, b.logged, b.loggedDays, b.pos), (BaselineSource.log, 50000, 12000, 2, 62000));
+    expect(ScanLogDraft(code: 'x', date: DateTime(2026, 10, 29), pos: 66000, baseline: b).counter, 4000);
+
+    // no scan at all: counts from the list start plus every day logged since the import
+    final fromStart = scanBaseline(date: '2026-10-27', days: const [Day(date: '2026-10-25', counter: 9000), Day(date: '2026-10-26', counter: 5000)], scans: const [], listStart: '2026-10-26');
+    expect((fromStart.source, fromStart.pos, fromStart.loggedDays), (BaselineSource.listStart, 5000, 1));
+
+    // an ordinary scan: its own day is left out, later days are added
+    int at(int day, int hour) => DateTime(2026, 10, day, hour).millisecondsSinceEpoch;
+    final fromScan = scanBaseline(
+      date: '2026-10-29',
+      days: const [Day(date: '2026-10-27', counter: 7000), Day(date: '2026-10-28', counter: 6000)],
+      scans: [Scan(ts: at(27, 10), code: 'a', pos: 30000)],
+    );
+    expect((fromScan.source, fromScan.anchorPos, fromScan.logged, fromScan.pos), (BaselineSource.scan, 30000, 6000, 36000));
+  });
+
   test('printerSteps: printed = reading − previous; reset counts the whole reading; going down is flagged', () {
     PrinterReading r(String id, String date, int value, {bool reset = false}) => PrinterReading(id: id, ts: int.parse(id), date: date, value: value, reset: reset);
     final steps = printerSteps([
@@ -361,34 +449,129 @@ void main() {
     expect(printedByDay(steps), {'2026-10-23': 5000, '2026-10-24': 7000, '2026-10-25': 3000, '2026-10-26': 1500});
   });
 
-  test('TrackerRepository: printer readings fill and clear the Daily log counter', () async {
-    final dir = await Directory.systemTemp.createTemp('qr_tracker_printer');
+  test('TrackerRepository: one log per day, printer readings become machine totals, monthly targets', () async {
+    final dir = await Directory.systemTemp.createTemp('qr_tracker_month');
+    addTearDown(() async {
+      await Hive.close();
+      await dir.delete(recursive: true);
+    });
+    // trial-phase data: two logs on one date (one with a shipment), printer readings, one daily target
+    Hive.init(dir.path);
+    final days = await Hive.openBox('days');
+    await days.put('100', const Day(id: '100', date: '2026-10-23', counter: 3000, note: 'morning').toMap());
+    await days.put('101', const Day(id: '101', date: '2026-10-23', counter: 4500, shipped: 2000, note: 'night').toMap());
+    await days.put('102', const Day(id: '102', date: '2026-10-24', counter: 7000).toMap());
+    final printer = await Hive.openBox('printer');
+    for (final r in const [
+      PrinterReading(id: '200', ts: 1, date: '2026-10-22', value: 1000000),
+      PrinterReading(id: '201', ts: 2, date: '2026-10-23', value: 1005000),
+      PrinterReading(id: '202', ts: 3, date: '2026-10-23', value: 1007500), // the day's last reading wins
+    ]) {
+      await printer.put(r.id, r.toMap());
+    }
+    await (await Hive.openBox('kv')).put('settings', {'defaultTarget': 8000});
+    await Hive.close();
+
+    final repo = TrackerRepository();
+    await repo.init(path: dir.path);
+    final log = repo.logOn('2026-10-23')!;
+    expect((log.id, log.counter, log.note, log.total), ('100', 7500, 'morning · night', 1007500));
+    final shipment = repo.entries['101']!;
+    expect((shipment.counter, shipment.shipped, shipment.hasLog), (null, 2000, false)); // the shipment stays on its own
+    expect(repo.days['2026-10-22']!.total, 1000000);
+
+    // the old daily target is kept for the months logged so far; a later month's target doesn't change them
+    expect(repo.dailyTargetFor('2026-10'), 8000);
+    await repo.setMonthTarget('2026-11', 12000);
+    expect((repo.dailyTargetFor('2026-10'), repo.dailyTargetFor('2026-12')), (8000, 12000));
+
+    // saving a day updates its one log; the machine total is checked against the day before
+    await repo.saveLog(date: '2026-10-24', counter: 7000, total: 1014500);
+    expect(repo.entries.values.where((d) => d.date == '2026-10-24').length, 1);
+    final oct = repo.monthSummary(DateTime(2026, 10), now: DateTime(2026, 10, 25));
+    expect(oct.days[23].gap, 0);
+
+    await repo.setDaysOff(['2026-10-25'], true);
+    expect(repo.targetFor(const Day(date: '2026-10-25')), isNull);
+    expect(repo.targetFor(const Day(date: '2026-10-26')), 8000);
+
+    // deleting a log keeps a shipment on the same record
+    await repo.deleteLog('2026-10-23');
+    expect((repo.days['2026-10-23']!.counter, repo.days['2026-10-23']!.shipped), (null, 2000));
+
+    // a backup keeps targets, days off and totals; printer readings aren't turned into totals again
+    final backup = repo.backupJson();
+    await repo.resetAll();
+    await repo.restore(backup);
+    expect((repo.dailyTargetFor('2026-11'), repo.isOff('2026-10-25'), repo.days['2026-10-24']!.total), (12000, true, 1014500));
+    expect(repo.days['2026-10-23']!.total, isNull);
+  });
+
+  test('TrackerRepository: a machine reading never changes the daily printing log', () async {
+    final dir = await Directory.systemTemp.createTemp('qr_tracker_reading');
     addTearDown(() async {
       await Hive.close();
       await dir.delete(recursive: true);
     });
     final repo = TrackerRepository();
     await repo.init(path: dir.path);
-    await repo.saveDay(const Day(date: '2026-10-23', target: 6000, note: 'kept'));
+    await repo.saveLog(date: '2026-11-04', counter: 11500, total: null, note: 'kept');
 
-    await repo.savePrinterReading(date: DateTime(2026, 10, 22), value: 1000000);
-    expect(repo.days['2026-10-22'], isNull); // first reading: nothing to subtract yet
-    await repo.savePrinterReading(date: DateTime(2026, 10, 23), value: 1006500);
-    final day = repo.days['2026-10-23']!;
-    expect((day.counter, day.fromPrinter, day.target, day.note), (6500, true, 6000, 'kept'));
-    expect(repo.entries.length, 1); // filled into the existing record, not a new one
+    // a reading on a logged day keeps its printed count and note
+    await repo.saveMachineReading(date: '2026-11-04', total: 1000000);
+    final day = repo.days['2026-11-04']!;
+    expect((day.counter, day.note, day.total, day.totalReset), (11500, 'kept', 1000000, false));
 
-    // deleting the reading clears the counter it filled, keeping the rest of the day
-    await repo.deletePrinterReading(repo.printerHistory.last.reading.id);
-    final cleared = repo.days['2026-10-23']!;
-    expect((cleared.counter, cleared.fromPrinter, cleared.target), (null, false, 6000));
+    // a reading on a day with no daily log adds only the reading: printing stays unlogged
+    await repo.saveMachineReading(date: '2026-11-05', total: 1500, reset: true);
+    final next = repo.days['2026-11-05']!;
+    expect((next.counter, next.total, next.totalReset), (null, 1500, true));
+    expect(repo.entries.values.where((d) => d.date == '2026-11-05').length, 1);
 
-    // backups carry the readings
+    // removing the reading removes a record that held nothing else, and keeps a daily log
+    await repo.saveMachineReading(date: '2026-11-05', total: null);
+    expect(repo.days['2026-11-05'], isNull);
+    await repo.saveMachineReading(date: '2026-11-04', total: null);
+    expect((repo.days['2026-11-04']!.counter, repo.days['2026-11-04']!.total), (11500, null));
+  });
+
+  test('TrackerRepository: weekend and holidays are days off; a single day can be switched', () async {
+    final dir = await Directory.systemTemp.createTemp('qr_tracker_weekend');
+    addTearDown(() async {
+      await Hive.close();
+      await dir.delete(recursive: true);
+    });
+    final repo = TrackerRepository();
+    await repo.init(path: dir.path);
+    await repo.setMonthTarget('2026-11', 10000);
+    await repo.setWeekend({DateTime.friday});
+    await repo.saveHoliday(DateTime(2026, 11, 17), DateTime(2026, 11, 18), 'National Day');
+
+    expect((repo.isOff('2026-11-06'), repo.isOff('2026-11-05')), (true, false)); // a Friday, a Thursday
+    expect((repo.isOff('2026-11-18'), repo.holidayOn('2026-11-18')), (true, 'National Day'));
+    final nov = repo.monthSummary(DateTime(2026, 11), now: DateTime(2026, 11, 1));
+    expect(nov.workingDays, 30 - 4 - 2); // 4 Fridays and 2 holiday days
+    expect(nov.monthTarget, 24 * 10000);
+    expect(nov.days[16].holiday, 'National Day');
+
+    // working on a Friday; taking a Thursday off
+    await repo.setDaysOff(['2026-11-06'], false);
+    await repo.setDaysOff(['2026-11-05'], true);
+    expect((repo.isOff('2026-11-06'), repo.isOff('2026-11-05'), repo.isOff('2026-11-13')), (false, true, true));
+
+    final group = groupHolidays(repo.holidays).single;
+    expect((group.name, group.from, group.to, group.dates.length), ('National Day', '2026-11-17', '2026-11-18', 2));
+    await repo.deleteHolidays(['2026-11-17', '2026-11-18']);
+    expect(repo.isOff('2026-11-18'), isFalse);
+
+    // survives a backup
+    await repo.saveHoliday(DateTime(2026, 12, 2), DateTime(2026, 12, 2), 'Founding');
     final backup = repo.backupJson();
     await repo.resetAll();
-    expect(repo.printerHistory, isEmpty);
+    expect(repo.weekend, isEmpty);
     await repo.restore(backup);
-    expect(repo.printerHistory.single.reading.value, 1000000);
+    expect(repo.weekend, {DateTime.friday});
+    expect((repo.holidayOn('2026-12-02'), repo.isOff('2026-11-06')), ('Founding', false));
   });
 
   test('TrackerRepository: archiving moves the list and scans to history and keeps the daily log', () async {
@@ -502,8 +685,7 @@ void main() {
     await repo.saveDay(const Day(date: '2026-10-31', counter: 5000)); // takes the active list's product
     await repo.saveDay(const Day(date: '2026-11-01', counter: 700, product: 'All Purpose Joint')); // chosen for the day
     await repo.saveDay(repo.entryOn('2026-10-31')!.copyWith(note: 'edited'));
-    await repo.savePrinterReading(date: DateTime(2026, 11, 1), value: 100);
-    await repo.savePrinterReading(date: DateTime(2026, 11, 2), value: 400); // printer fill takes the product too
+    await repo.saveLog(date: '2026-11-02', counter: 300, total: 400); // the day's log takes the product too
     expect(repo.days['2026-10-31']!.product, 'Cover Coat');
     expect(repo.days['2026-11-01']!.product, 'All Purpose Joint');
     expect(repo.days['2026-11-02']!.product, 'Cover Coat');
@@ -559,6 +741,32 @@ void main() {
     final stray = await repo.addScan(' XX-1 ');
     expect((stray.code, stray.pos), ('XX-1', null));
     expect(repo.scanLogDraft('LT2026000001', DateTime(2026, 11, 4)).code, 'LT-2026-000001');
+  });
+
+  test('ScanCubit opens on the last saved scan, and drops it when the scans are cleared', () async {
+    final dir = await Directory.systemTemp.createTemp('qr_tracker_last_scan');
+    addTearDown(() async {
+      await Hive.close();
+      await dir.delete(recursive: true);
+    });
+    final repo = TrackerRepository();
+    await repo.init(path: dir.path);
+    expect(ScanCubit(repo).state.result, isNull);
+
+    await repo.importCodes(['A1', 'A2', 'A3', 'A4'], 'list.xlsx', clearScans: true, product: 'Cover Coat');
+    await repo.addScan('A3');
+    await repo.addScan('a1'); // out of order
+    await repo.addScan('A2');
+
+    final cubit = ScanCubit(repo);
+    addTearDown(cubit.close);
+    final r = cubit.state.result!;
+    expect((r.scan.code, r.scan.pos, r.previous?.pos, r.nextCode, r.total, r.product), ('A2', 2, 3, 'A3', 4, 'Cover Coat'));
+    expect(cubit.state.sessionCount, 0); // shown again, not a new scan
+
+    await repo.archiveList();
+    await Future<void>.delayed(Duration.zero);
+    expect(cubit.state.result, isNull);
   });
 
   test('ImportPreview keeps the product when other options change', () {

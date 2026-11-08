@@ -132,8 +132,12 @@ class _ScanLogDialogState extends State<_ScanLogDialog> {
               BaselineSource.scan => 'Last scan before (${fmtTime(baseline.at!.millisecondsSinceEpoch)})',
               BaselineSource.listStart => 'Start of the list',
             },
-            '#${fmt(baseline.pos)}',
+            '#${fmt(baseline.anchorPos)}',
           ),
+          if (baseline.loggedDays > 0) ...[
+            _line('+ Logged since (${baseline.loggedDays} ${baseline.loggedDays == 1 ? 'day' : 'days'})', '+${fmt(baseline.logged)}'),
+            _line('Start of this day', '#${fmt(baseline.pos)}'),
+          ],
           if (d.loggedCounter != null)
             _line(
               d.loggedPos == null ? 'Already logged this day' : 'Already logged (last scan #${fmt(d.loggedPos)})',
@@ -149,12 +153,13 @@ class _ScanLogDialogState extends State<_ScanLogDialog> {
             switch (d) {
               _ when d.behindDay =>
                 'This code is behind the last scan for this day (#${fmt(d.loggedPos)}), so the logged ${fmt(d.loggedCounter)} is kept. Change it only if it is wrong.',
-              _ when d.behindStart => 'This code is behind the last scan log. Check you scanned the code being printed now, or enter the counter.',
+              _ when d.behindStart =>
+                'This code is behind where the day began (#${fmt(baseline.pos)}). Check you scanned the code being printed now and the days logged before, or enter the counter.',
               _ when d.lowersLogged =>
                 'This is lower than the ${fmt(d.loggedCounter)} already logged for this day. Confirming replaces it. Check before you confirm.',
-              _ when baseline.source == BaselineSource.listStart =>
-                'Nothing scanned before this day, so it counts from the start of the list. Change it if printing started earlier.',
-              _ => 'Codes printed since the last scan. Change it if the machine counter says otherwise.',
+              _ when baseline.source == BaselineSource.listStart && baseline.loggedDays == 0 =>
+                'Nothing scanned or logged before this day, so it counts from the start of the list. Change it if printing started earlier.',
+              _ => 'Codes printed since the last recorded print. Change it if the machine counter says otherwise.',
             },
             style: sans(13, color: d.behind || d.lowersLogged ? C.warning : C.onVariant),
           ),
