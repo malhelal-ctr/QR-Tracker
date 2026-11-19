@@ -90,12 +90,13 @@ Widget _diff(MonthDay d) {
 }
 
 Widget _check(MonthDay d) {
-  final gap = d.gap;
-  if (gap == null) return d.day?.totalReset ?? false ? _num('reset', color: C.outline) : const SizedBox.shrink();
-  if (gap == 0) return Align(alignment: Alignment.centerRight, child: Icon(Icons.check, size: 18.r, color: C.success));
+  final gaps = [d.gap, d.gap2];
+  final warnings = gaps.whereType<int>().where((g) => g != 0).toList();
+  if (warnings.isEmpty && gaps.any((g) => g == 0)) return Align(alignment: Alignment.centerRight, child: Icon(Icons.check, size: 18.r, color: C.success));
+  if (warnings.isEmpty) return (d.day?.totalReset ?? false) || (d.day?.totalReset2 ?? false) ? _num('reset', color: C.outline) : const SizedBox.shrink();
   return Tooltip(
-    message: 'Machine total is ${fmt(gap.abs())} ${gap > 0 ? 'higher' : 'lower'} than the day before + printed',
-    child: _num('⚠ ${fmtSigned(gap)}', color: C.warning),
+    message: 'One or more machine totals do not match the previous reading + that laser’s output',
+    child: _num('⚠ ${warnings.map(fmtSigned).join(' / ')}', color: C.warning),
   );
 }
 
@@ -116,13 +117,16 @@ final _wideCols = [
   _Col('PRODUCT', 4, (d) => Text(d.day?.product ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: sans(14, color: C.primary)), align: TextAlign.left),
   _Col('TARGET', 4, (d) => _num(d.target == null ? '—' : '${fmt(d.target)}${d.day?.target != null ? '*' : ''}', color: C.onVariant),
       total: (s) => _num(fmt(s.targetSoFar), color: C.onVariant)),
+  _Col('LASER 1', 4, (d) => _num(fmt(d.day?.laser1Output), color: C.onVariant)),
+  _Col('LASER 2', 4, (d) => _num(fmt(d.day?.laser2Output), color: C.onVariant)),
   _Col('PRINTED', 4, _printed, total: (s) => _num(fmt(s.printed), weight: FontWeight.w700)),
   _Col('+/−', 4, _diff, total: _sumDiff),
   _Col('MONTH SO FAR', 4, (d) {
     final r = d.runningDiff;
     return r == null ? const SizedBox.shrink() : _num(fmtSigned(r), color: r >= 0 ? C.success : C.danger);
   }),
-  _Col('MACHINE TOTAL', 5, (d) => _num(fmt(d.day?.total), color: C.onVariant)),
+  _Col('LASER 1 TOTAL', 5, (d) => _num(fmt(d.day?.total), color: C.onVariant)),
+  _Col('LASER 2 TOTAL', 5, (d) => _num(fmt(d.day?.total2), color: C.onVariant)),
   _Col('CHECK', 3, _check),
   _Col('NOTE', 6, (d) => Text(d.day?.note ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: sans(13, color: C.onVariant)), align: TextAlign.left),
 ];

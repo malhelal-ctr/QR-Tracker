@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/data/month_plan.dart';
+import '../../../core/data/models.dart';
 import '../../../core/data/repository_listener.dart';
 import '../../../core/data/scan_log.dart';
 import '../../../core/data/tracker_repository.dart';
@@ -49,11 +50,14 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
   LogEntry entryFor(String date) {
     final log = _repository.logOn(date);
     final prev = _repository.totalBefore(date);
+    final prev2 = _repository.totalBefore(date, machine: LaserMachine.laser2);
     return LogEntry(
       date: date,
       log: log != null && log.hasLog ? log : null,
       previousTotal: prev?.total,
       previousTotalDate: prev?.date,
+      previousTotal2: prev2?.total,
+      previousTotalDate2: prev2?.date,
       monthTarget: _repository.dailyTargetFor(date.substring(0, 7)),
       off: _repository.isOff(date),
       holiday: _repository.holidayOn(date),
@@ -64,20 +68,28 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
   Future<void> saveLog({
     required String date,
     required int? counter,
+    int? laser1,
+    int? laser2,
     required int? total,
+    int? total2,
     required bool totalReset,
+    bool totalReset2 = false,
     required int? target,
     required String note,
     required String product,
-  }) => _repository.saveLog(date: date, counter: counter, total: total, totalReset: totalReset, target: target, note: note, product: product);
+  }) => _repository.saveLog(date: date, counter: counter, laser1: laser1, laser2: laser2, total: total, total2: total2, totalReset: totalReset, totalReset2: totalReset2, target: target, note: note, product: product);
 
   Future<void> deleteLog(String date) => _repository.deleteLog(date);
 
-  /// Machine reading only: the total counter and whether it was reset; null removes the reading.
-  Future<void> saveMachineReading(String date, int? total, bool reset) => _repository.saveMachineReading(date: date, total: total, reset: reset);
+  Future<void> saveMachineReadings(String date, {required int? laser1, required bool reset1, required int? laser2, required bool reset2}) async {
+    await _repository.saveMachineReadings(date: date, laser1: laser1, reset1: reset1, laser2: laser2, reset2: reset2);
+  }
 
-  /// The day a new machine reading is for: yesterday until it has one, then today.
-  String get defaultReadingDate => entryFor(defaultDate).log?.total == null ? defaultDate : ymd(DateTime.now());
+  /// Yesterday until both machine readings are present, then today.
+  String get defaultReadingDate {
+    final log = entryFor(defaultDate).log;
+    return log?.total == null || log?.total2 == null ? defaultDate : ymd(DateTime.now());
+  }
 
   Future<void> setDayOff(String date, bool off) => _repository.setDaysOff([date], off);
 
@@ -85,11 +97,11 @@ class DailyLogCubit extends Cubit<DailyLogState> with RepositoryListener {
   Future<void> setMonthTarget(int? dailyTarget) => _repository.setMonthTarget(ym(state.month), dailyTarget);
 
   /// Log by scan: what the popup shows for a scanned code and production day.
-  ScanLogDraft draftFromScan(String code, DateTime date) => _repository.scanLogDraft(code, date);
+  ScanLogDraft draftFromScan(String code, DateTime date, {LaserMachine machine = LaserMachine.laser1}) => _repository.scanLogDraft(code, date, machine: machine);
 
   /// Log by scan confirmed: records the scan and saves the counter.
   Future<void> saveScanLog(ScanLogDraft draft, int counter) async {
-    await _repository.addScan(draft.code);
+    await _repository.addScan(draft.code, machine: draft.machine);
     await _repository.saveScanLog(draft, counter);
   }
 }

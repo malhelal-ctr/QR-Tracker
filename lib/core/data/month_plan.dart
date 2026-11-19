@@ -20,12 +20,12 @@ int? totalGap({required int? previousTotal, required int? printed, required int?
     reset || previousTotal == null || printed == null || total == null ? null : total - (previousTotal + printed);
 
 /// The latest machine total logged before [date] (yyyy-MM-dd), with its date.
-({String date, int total})? previousTotal(String date, Iterable<Day> days) {
+({String date, int total})? previousTotal(String date, Iterable<Day> days, {LaserMachine machine = LaserMachine.laser1}) {
   Day? best;
   for (final d in days) {
-    if (d.total != null && d.date.compareTo(date) < 0 && (best == null || d.date.compareTo(best.date) > 0)) best = d;
+    if (d.totalFor(machine) != null && d.date.compareTo(date) < 0 && (best == null || d.date.compareTo(best.date) > 0)) best = d;
   }
-  return best == null ? null : (date: best.date, total: best.total!);
+  return best == null ? null : (date: best.date, total: best.totalFor(machine)!);
 }
 
 /// One calendar day of a month in the Daily log.
@@ -39,6 +39,7 @@ class MonthDay {
     this.counted = false,
     this.runningDiff,
     this.previousTotal,
+    this.previousTotal2,
     this.holiday,
   });
 
@@ -67,6 +68,7 @@ class MonthDay {
 
   /// The machine total logged before this day, to check this day's total against.
   final int? previousTotal;
+  final int? previousTotal2;
 
   int? get printed => day?.counter;
   bool get logged => day?.hasLog ?? false;
@@ -82,12 +84,15 @@ class MonthDay {
   }
 
   /// See [totalGap].
-  int? get gap => totalGap(previousTotal: previousTotal, printed: printed, total: day?.total, reset: day?.totalReset ?? false);
+  int? get gap => totalGap(previousTotal: previousTotal, printed: day?.laser1Output, total: day?.total, reset: day?.totalReset ?? false);
+  int? get gap2 => totalGap(previousTotal: previousTotal2, printed: day?.laser2Output, total: day?.total2, reset: day?.totalReset2 ?? false);
+  int? gapFor(LaserMachine machine) => machine == LaserMachine.laser1 ? gap : gap2;
+  int? previousTotalFor(LaserMachine machine) => machine == LaserMachine.laser1 ? previousTotal : previousTotal2;
 }
 
 /// One month of the Daily log: every day with its target and result, and the month's totals.
 class MonthSummary {
-  const MonthSummary({required this.month, required this.days, required this.dailyTarget, required this.today, this.machinePrinted, this.machineLogged});
+  const MonthSummary({required this.month, required this.days, required this.dailyTarget, required this.today, this.machinePrinted, this.machineLogged, this.machinePrinted2, this.machineLogged2});
 
   /// [days]: one merged log per date (yyyy-MM-dd → day). [dailyTarget]: the month's daily target.
   factory MonthSummary.compute({
@@ -106,7 +111,9 @@ class MonthSummary {
 
     // machine totals in date order, to find each day's previous total in one pass
     final withTotal = days.values.where((d) => d.total != null).toList()..sort((a, b) => a.date.compareTo(b.date));
+    final withTotal2 = days.values.where((d) => d.total2 != null).toList()..sort((a, b) => a.date.compareTo(b.date));
     int? totalBefore(String key) => withTotal.lastWhereOrNull((d) => d.date.compareTo(key) < 0)?.total;
+    int? totalBefore2(String key) => withTotal2.lastWhereOrNull((d) => d.date.compareTo(key) < 0)?.total2;
 
     var running = 0;
     final list = <MonthDay>[];
@@ -118,7 +125,7 @@ class MonthSummary {
       final target = day?.target ?? (off ? null : dailyTarget);
       final logged = day?.counter != null;
       final counted = key.compareTo(today) < 0 || (key == today && logged);
-      final d = MonthDay(date: date, key: key, day: day, target: target, off: off, counted: counted, previousTotal: totalBefore(key));
+      final d = MonthDay(date: date, key: key, day: day, target: target, off: off, counted: counted, previousTotal: totalBefore(key), previousTotal2: totalBefore2(key));
       int? runningDiff;
       if (counted) {
         running += d.diff ?? (off ? (day?.counter ?? 0) : 0);
@@ -132,6 +139,7 @@ class MonthSummary {
         off: off,
         counted: counted,
         previousTotal: d.previousTotal,
+        previousTotal2: d.previousTotal2,
         runningDiff: runningDiff,
         holiday: holidayOn?.call(key),
       ));
@@ -139,16 +147,20 @@ class MonthSummary {
 
     // what the machine total moved this month: last total in the month − last total before it,
     // unless the total was reset in between; compared with the printed counts logged over the same days
-    int? machinePrinted, machineLogged;
-    final base = withTotal.lastWhereOrNull((d) => d.date.compareTo(firstKey) < 0);
-    final inMonth = withTotal.where((d) => d.date.startsWith(ym(first))).toList();
-    if (base != null && inMonth.isNotEmpty && !inMonth.any((d) => d.totalReset)) {
+    ({int? moved, int? logged}) stats(LaserMachine machine, List<Day> totals) {
+      final base = totals.lastWhereOrNull((d) => d.date.compareTo(firstKey) < 0);
+      final inMonth = totals.where((d) => d.date.startsWith(ym(first))).toList();
+      if (base == null || inMonth.isEmpty || inMonth.any((d) => d.totalWasResetFor(machine))) return (moved: null, logged: null);
       final last = inMonth.last;
-      machinePrinted = last.total! - base.total!;
-      machineLogged = list.where((d) => d.key.compareTo(last.date) <= 0).fold<int>(0, (a, d) => a + (d.printed ?? 0));
+      return (
+        moved: last.totalFor(machine)! - base.totalFor(machine)!,
+        logged: list.where((d) => d.key.compareTo(last.date) <= 0).fold<int>(0, (a, d) => a + (d.day?.outputFor(machine) ?? 0)),
+      );
     }
+    final machine1 = stats(LaserMachine.laser1, withTotal);
+    final machine2 = stats(LaserMachine.laser2, withTotal2);
 
-    return MonthSummary(month: first, days: list, dailyTarget: dailyTarget, today: DateTime(now.year, now.month, now.day), machinePrinted: machinePrinted, machineLogged: machineLogged);
+    return MonthSummary(month: first, days: list, dailyTarget: dailyTarget, today: DateTime(now.year, now.month, now.day), machinePrinted: machine1.moved, machineLogged: machine1.logged, machinePrinted2: machine2.moved, machineLogged2: machine2.logged);
   }
 
   /// First day of the month.
@@ -165,9 +177,15 @@ class MonthSummary {
 
   /// Printed counts logged over the same days as [machinePrinted].
   final int? machineLogged;
+  final int? machinePrinted2;
+  final int? machineLogged2;
 
   /// [machinePrinted] − [machineLogged]: printing the daily logs don't account for.
   int? get unaccounted => machinePrinted == null ? null : machinePrinted! - machineLogged!;
+  int? get unaccounted2 => machinePrinted2 == null ? null : machinePrinted2! - machineLogged2!;
+  int? machinePrintedFor(LaserMachine machine) => machine == LaserMachine.laser1 ? machinePrinted : machinePrinted2;
+  int? machineLoggedFor(LaserMachine machine) => machine == LaserMachine.laser1 ? machineLogged : machineLogged2;
+  int? unaccountedFor(LaserMachine machine) => machine == LaserMachine.laser1 ? unaccounted : unaccounted2;
 
   Iterable<MonthDay> get _working => days.where((d) => !d.off);
 
@@ -206,7 +224,7 @@ class MonthSummary {
   int get missingDays => days.where((d) => d.missing).length;
 
   /// Days whose machine total doesn't match the day before plus what was printed.
-  int get totalWarnings => days.where((d) => (d.gap ?? 0) != 0).length;
+  int get totalWarnings => days.where((d) => (d.gap ?? 0) != 0 || (d.gap2 ?? 0) != 0).length;
 
   /// The counted day furthest below its target.
   MonthDay? get worstDay {

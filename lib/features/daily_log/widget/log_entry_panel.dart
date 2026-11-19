@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/data/models.dart';
 import '../../../core/data/month_plan.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
@@ -13,7 +14,7 @@ import '../../../core/widgets/stepper_field.dart';
 import '../model/daily_log_state.dart';
 
 /// What the user entered for a day.
-typedef LogInput = ({int? counter, int? total, bool totalReset, int? target, String note, String product});
+typedef LogInput = ({int? laser1, int? laser2, int? total, int? total2, bool totalReset, bool totalReset2, int? target, String note, String product});
 
 /// The day's log: printed today and the machine total, checked against each other, plus note and target.
 /// Shown beside the month on a wide screen, or in a bottom sheet on a phone.
@@ -46,11 +47,14 @@ class LogEntryPanel extends StatefulWidget {
 }
 
 class _LogEntryPanelState extends State<LogEntryPanel> {
-  late final _counter = TextEditingController(text: widget.entry.log?.counter?.toString() ?? '');
+  late final _laser1 = TextEditingController(text: widget.entry.log?.laser1Output?.toString() ?? '');
+  late final _laser2 = TextEditingController(text: widget.entry.log?.laser2Output?.toString() ?? '');
   late final _total = TextEditingController(text: widget.entry.log?.total?.toString() ?? '');
+  late final _total2 = TextEditingController(text: widget.entry.log?.total2?.toString() ?? '');
   late final _note = TextEditingController(text: widget.entry.log?.note ?? '');
   late final _target = TextEditingController(text: widget.entry.log?.target?.toString() ?? '');
   late bool _reset = widget.entry.log?.totalReset ?? false;
+  late bool _reset2 = widget.entry.log?.totalReset2 ?? false;
   late bool _ownTarget = widget.entry.log?.target != null;
   late String _product = widget.entry.product;
   bool _saving = false;
@@ -58,31 +62,41 @@ class _LogEntryPanelState extends State<LogEntryPanel> {
   @override
   void initState() {
     super.initState();
-    _counter.addListener(_changed);
+    _laser1.addListener(_changed);
+    _laser2.addListener(_changed);
     _total.addListener(_changed);
+    _total2.addListener(_changed);
   }
 
   void _changed() => setState(() {});
 
   @override
   void dispose() {
-    _counter.dispose();
+    _laser1.dispose();
+    _laser2.dispose();
     _total.dispose();
+    _total2.dispose();
     _note.dispose();
     _target.dispose();
     super.dispose();
   }
 
-  int? get _printedValue => int.tryParse(_counter.text.trim());
+  int? get _laser1Value => int.tryParse(_laser1.text.trim());
+  int? get _laser2Value => int.tryParse(_laser2.text.trim());
+  int? get _printedValue => _laser1Value == null && _laser2Value == null ? null : (_laser1Value ?? 0) + (_laser2Value ?? 0);
   int? get _totalValue => int.tryParse(_total.text.trim());
+  int? get _total2Value => int.tryParse(_total2.text.trim());
 
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
       await widget.onSave((
-        counter: _printedValue,
+        laser1: _laser1Value,
+        laser2: _laser2Value,
         total: _totalValue,
+        total2: _total2Value,
         totalReset: _reset,
+        totalReset2: _reset2,
         target: _ownTarget ? int.tryParse(_target.text.trim()) : null,
         note: _note.text,
         product: _product,
@@ -104,11 +118,12 @@ class _LogEntryPanelState extends State<LogEntryPanel> {
 
   /// The line under the machine total: whether it agrees with the day before + printed today,
   /// or the number either field can be filled with.
-  Widget _check() {
+  Widget _check(LaserMachine machine, TextEditingController outputController, TextEditingController totalController, bool reset) {
     final e = widget.entry;
-    final prev = e.previousTotal;
-    final printed = _printedValue;
-    final total = _totalValue;
+    final prev = e.previousTotalFor(machine);
+    final previousDate = e.previousTotalDateFor(machine);
+    final printed = int.tryParse(outputController.text.trim());
+    final total = int.tryParse(totalController.text.trim());
 
     Widget note(IconData icon, Color color, String text, {String? use, VoidCallback? onUse}) => Padding(
           padding: EdgeInsets.only(top: 8.r),
@@ -123,17 +138,17 @@ class _LogEntryPanelState extends State<LogEntryPanel> {
     if (prev == null) {
       return note(Icons.info_outline, C.onVariant, 'No earlier machine total yet — the check starts from the next day.');
     }
-    final since = 'total on ${fmtDay(e.previousTotalDate!)}: ${fmt(prev)}';
+    final since = 'total on ${fmtDay(previousDate!)}: ${fmt(prev)}';
     if (total == null && printed != null) {
       return note(Icons.calculate_outlined, C.onVariant, 'Expected total ${fmt(prev + printed)} ($since)',
-          use: 'USE', onUse: () => _total.text = '${prev + printed}');
+          use: 'USE', onUse: () => totalController.text = '${prev + printed}');
     }
-    if (total != null && printed == null && !_reset && total >= prev) {
+    if (total != null && printed == null && !reset && total >= prev) {
       return note(Icons.calculate_outlined, C.onVariant, 'Printed by the total: ${fmt(total - prev)} ($since)',
-          use: 'USE', onUse: () => _counter.text = '${total - prev}');
+          use: 'USE', onUse: () => outputController.text = '${total - prev}');
     }
     if (total == null) return note(Icons.info_outline, C.onVariant, 'Previous $since');
-    if (_reset) return note(Icons.restart_alt, C.onVariant, 'Machine total was reset — not checked against $since');
+    if (reset) return note(Icons.restart_alt, C.onVariant, 'Machine total was reset — not checked against $since');
     final gap = totalGap(previousTotal: prev, printed: printed, total: total);
     if (gap == 0) return note(Icons.check_circle_outline, C.success, 'Matches: ${fmt(prev)} + ${fmt(printed)} = ${fmt(total)}');
     if (total < prev) return note(Icons.warning_amber_rounded, C.warning, 'Lower than the $since. Was the machine total reset?');
@@ -150,37 +165,52 @@ class _LogEntryPanelState extends State<LogEntryPanel> {
   Widget build(BuildContext context) {
     final e = widget.entry;
     final date = DateTime.parse(e.date);
-    final prev = e.previousTotal;
-    final total = _totalValue;
-    final showReset = _reset || (prev != null && total != null && total < prev);
 
     final printed = [
-      const FieldLabel('Printed today (counter before reset)'),
-      StepperField(controller: _counter, color: C.primary),
+      const FieldLabel('Laser 1 output (counter before reset)'),
+      StepperField(controller: _laser1, color: C.primary),
       if (widget.onScan != null) ...[
         SizedBox(height: 8.r),
         BigButton(label: 'Log by scan', icon: Icons.qr_code_scanner, style: BigButtonStyle.tonal, height: 44.r, onPressed: widget.onScan),
       ],
+      SizedBox(height: 16.r),
+      const FieldLabel('Laser 2 output (counter before reset)'),
+      StepperField(controller: _laser2, color: C.primary),
+      if (_printedValue != null) ...[
+        SizedBox(height: 8.r),
+        Text('Combined output: ${fmt(_printedValue)}', style: mono(14, weight: FontWeight.w700, color: C.primary)),
+      ],
     ];
 
-    final machine = [
-      const FieldLabel('Machine total (never reset)'),
-      TextField(
-        controller: _total,
-        keyboardType: TextInputType.number,
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        style: mono(24, weight: FontWeight.w700),
-        decoration: InputDecoration(hintText: prev == null ? 'e.g. 1482900' : 'after ${fmt(prev)}'),
-      ),
-      _check(),
-      if (showReset)
-        CheckboxListTile(
-          contentPadding: EdgeInsets.zero,
-          controlAffinity: ListTileControlAffinity.leading,
-          value: _reset,
-          onChanged: (v) => setState(() => _reset = v ?? false),
-          title: Text('The machine total was reset', style: sans(14)),
+    List<Widget> machineFields(LaserMachine laser, TextEditingController output, TextEditingController total, bool reset, ValueChanged<bool> onReset) {
+      final prev = e.previousTotalFor(laser);
+      final value = int.tryParse(total.text.trim());
+      final showReset = reset || (prev != null && value != null && value < prev);
+      return [
+        FieldLabel('${laser.label} machine total (never reset)'),
+        TextField(
+          controller: total,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          style: mono(24, weight: FontWeight.w700),
+          decoration: InputDecoration(hintText: prev == null ? 'e.g. 1482900' : 'after ${fmt(prev)}'),
         ),
+        _check(laser, output, total, reset),
+        if (showReset)
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            value: reset,
+            onChanged: (v) => onReset(v ?? false),
+            title: Text('${laser.label} total was reset', style: sans(14)),
+          ),
+      ];
+    }
+
+    final machine = [
+      ...machineFields(LaserMachine.laser1, _laser1, _total, _reset, (value) => setState(() => _reset = value)),
+      SizedBox(height: 16.r),
+      ...machineFields(LaserMachine.laser2, _laser2, _total2, _reset2, (value) => setState(() => _reset2 = value)),
     ];
 
     return Column(

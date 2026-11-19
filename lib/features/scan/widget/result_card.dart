@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/data/models.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
 import '../../../core/utils/responsive.dart';
@@ -30,7 +31,7 @@ class ResultCard extends StatelessWidget {
             child: Row(children: [
               const Icon(Icons.verified_outlined, color: C.success),
               SizedBox(width: 8.r),
-              Expanded(child: Text('MACHINE IS AT', style: sans(17, weight: FontWeight.w700, spacing: 0.8))),
+              Expanded(child: Text('${result.scan.machine.label.toUpperCase()} IS AT', style: sans(17, weight: FontWeight.w700, spacing: 0.8))),
               // the time changes with every scan, so a new read is easy to tell from the last one
               Text(fmtStamp(result.scan.ts), style: mono(13, weight: FontWeight.w600, color: C.onVariant)),
               SizedBox(width: 8.r),

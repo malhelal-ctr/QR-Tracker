@@ -1,15 +1,27 @@
-class Scan {
-  const Scan({required this.ts, required this.code, this.pos});
+enum LaserMachine { laser1, laser2 }
 
-  factory Scan.fromMap(Map m) => Scan(ts: m['ts'] as int, code: m['code'] as String, pos: m['pos'] as int?);
+extension LaserMachineLabel on LaserMachine {
+  String get label => this == LaserMachine.laser1 ? 'Laser 1' : 'Laser 2';
+}
+
+class Scan {
+  const Scan({required this.ts, required this.code, this.pos, this.machine = LaserMachine.laser1});
+
+  factory Scan.fromMap(Map m) => Scan(
+        ts: m['ts'] as int,
+        code: m['code'] as String,
+        pos: m['pos'] as int?,
+        machine: LaserMachine.values.byName((m['machine'] as String?) ?? LaserMachine.laser1.name),
+      );
 
   final int ts;
   final String code;
 
   /// 1-based print position in the imported list, null when the code is not in it.
   final int? pos;
+  final LaserMachine machine;
 
-  Map<String, dynamic> toMap() => {'ts': ts, 'code': code, 'pos': pos};
+  Map<String, dynamic> toMap() => {'ts': ts, 'code': code, 'pos': pos, 'machine': machine.name};
 }
 
 /// A finished QR list taken out of use, with its scans. Its daily log records stay in the log.
@@ -25,6 +37,7 @@ class ArchivedList {
     this.importedAt,
     this.scans = const [],
     this.product = '',
+    this.machine = LaserMachine.laser1,
   });
 
   factory ArchivedList.fromMap(Map m) => ArchivedList(
@@ -38,6 +51,7 @@ class ArchivedList {
         importedAt: m['importedAt'] as int?,
         scans: [for (final s in (m['scans'] as List? ?? [])) Scan.fromMap(s as Map)],
         product: (m['product'] as String?) ?? '',
+        machine: LaserMachine.values.byName((m['machine'] as String?) ?? LaserMachine.laser1.name),
       );
 
   /// Storage key.
@@ -61,6 +75,7 @@ class ArchivedList {
 
   /// Product the codes were printed for; empty when none was set.
   final String product;
+  final LaserMachine machine;
 
   List<String> get codes => codeText.isEmpty ? const [] : codeText.split('\n');
 
@@ -75,6 +90,7 @@ class ArchivedList {
         importedAt: importedAt,
         scans: scans,
         product: product ?? this.product,
+        machine: machine,
       );
 
   Map<String, dynamic> toMap() => {
@@ -88,6 +104,7 @@ class ArchivedList {
         'importedAt': importedAt,
         'scans': scans.map((s) => s.toMap()).toList(),
         'product': product,
+        'machine': machine.name,
       };
 }
 
@@ -136,21 +153,26 @@ class StockMove {
 /// One log record: what was printed / targeted / shipped on [date]. Stored under [id], so a date can
 /// have several records; [Day.mergeByDate] adds them up into one per date for totals and charts.
 class Day {
-  const Day({this.id = '', required this.date, this.target, this.counter, this.counterAt, this.shipped, this.note = '', this.scanPos, this.fromPrinter = false, this.product = '', this.total, this.totalReset = false});
+  const Day({this.id = '', required this.date, this.target, this.counter, this.laser1, this.laser2, this.counterAt, this.shipped, this.note = '', this.scanPos, this.scanPos2, this.fromPrinter = false, this.product = '', this.total, this.totalReset = false, this.total2, this.totalReset2 = false});
 
   factory Day.fromMap(Map m) => Day(
         id: (m['id'] as String?) ?? '',
         date: m['date'] as String,
         target: m['target'] as int?,
         counter: m['counter'] as int?,
+        laser1: m['laser1'] as int?,
+        laser2: m['laser2'] as int?,
         counterAt: m['counterAt'] as int?,
         shipped: m['shipped'] as int?,
         note: (m['note'] as String?) ?? '',
         scanPos: m['scanPos'] as int?,
+        scanPos2: m['scanPos2'] as int?,
         fromPrinter: (m['fromPrinter'] as bool?) ?? false,
         product: (m['product'] as String?) ?? '',
         total: m['total'] as int?,
         totalReset: (m['totalReset'] as bool?) ?? false,
+        total2: m['total2'] as int?,
+        totalReset2: (m['totalReset2'] as bool?) ?? false,
       );
 
   /// Storage key; empty until the record is first saved (and in older data, until it is migrated).
@@ -158,6 +180,13 @@ class Day {
   final String date; // yyyy-MM-dd
   final int? target;
   final int? counter; // machine counter = codes printed
+
+  /// Per-machine output. Older records have neither field; their combined [counter] belongs to Laser 1.
+  /// [counter] remains combined so existing totals, stock calculations and backups stay compatible.
+  final int? laser1;
+  final int? laser2;
+  int? get laser1Output => laser1 ?? (laser2 == null ? counter : null);
+  int? get laser2Output => laser2;
 
   /// When the counter was first logged (ms). Lid stock subtracts counters logged after a stock entry.
   final int? counterAt;
@@ -168,6 +197,10 @@ class Day {
 
   /// Print position of the code scanned for this log (Log by scan); the next scan log counts from here.
   final int? scanPos;
+  final int? scanPos2;
+
+  int? outputFor(LaserMachine machine) => machine == LaserMachine.laser1 ? laser1Output : laser2Output;
+  int? scanPositionFor(LaserMachine machine) => machine == LaserMachine.laser1 ? scanPos : scanPos2;
 
   /// [counter] is filled from printer counter readings (Printer tab), and is kept in step with them.
   final bool fromPrinter;
@@ -180,38 +213,53 @@ class Day {
 
   /// The machine total was reset before [total] was read, so it isn't checked against the day before.
   final bool totalReset;
+  final int? total2;
+  final bool totalReset2;
+
+  int? totalFor(LaserMachine machine) => machine == LaserMachine.laser1 ? total : total2;
+  bool totalWasResetFor(LaserMachine machine) => machine == LaserMachine.laser1 ? totalReset : totalReset2;
 
   /// True when nothing is logged in the record.
-  bool get isEmpty => target == null && counter == null && shipped == null && note.isEmpty && total == null;
+  bool get isEmpty => target == null && counter == null && shipped == null && note.isEmpty && total == null && total2 == null;
 
   /// True when the record holds a production log, not only a shipment.
-  bool get hasLog => counter != null || target != null || note.isNotEmpty || total != null;
+  bool get hasLog => counter != null || target != null || note.isNotEmpty || total != null || total2 != null;
 
   Day copyWith({
     String? id,
     int? Function()? target,
     int? Function()? counter,
+    int? Function()? laser1,
+    int? Function()? laser2,
     int? Function()? counterAt,
     int? Function()? shipped,
     String? note,
     int? Function()? scanPos,
+    int? Function()? scanPos2,
     bool? fromPrinter,
     String? product,
     int? Function()? total,
     bool? totalReset,
+    int? Function()? total2,
+    bool? totalReset2,
   }) => Day(
         id: id ?? this.id,
         date: date,
         target: target == null ? this.target : target(),
         counter: counter == null ? this.counter : counter(),
+        laser1: laser1 == null ? this.laser1 : laser1(),
+        laser2: laser2 == null ? this.laser2 : laser2(),
         counterAt: counterAt == null ? this.counterAt : counterAt(),
         shipped: shipped == null ? this.shipped : shipped(),
         note: note ?? this.note,
         scanPos: scanPos == null ? this.scanPos : scanPos(),
+        scanPos2: scanPos2 == null ? this.scanPos2 : scanPos2(),
         fromPrinter: fromPrinter ?? this.fromPrinter,
         product: product ?? this.product,
         total: total == null ? this.total : total(),
         totalReset: totalReset ?? this.totalReset,
+        total2: total2 == null ? this.total2 : total2(),
+        totalReset2: totalReset2 ?? this.totalReset2,
       );
 
   Map<String, dynamic> toMap() => {
@@ -219,14 +267,19 @@ class Day {
         'date': date,
         'target': target,
         'counter': counter,
+        'laser1': laser1,
+        'laser2': laser2,
         'counterAt': counterAt,
         'shipped': shipped,
         'note': note,
         'scanPos': scanPos,
+        'scanPos2': scanPos2,
         'fromPrinter': fromPrinter,
         'product': product,
         'total': total,
         'totalReset': totalReset,
+        'total2': total2,
+        'totalReset2': totalReset2,
       };
 
   /// One [Day] per date from records in creation order: counters and shipments add up, the latest target and
@@ -241,15 +294,20 @@ class Day {
           ? r
           : m.copyWith(
               counter: () => sum(m.counter, r.counter),
+              laser1: () => sum(m.laser1Output, r.laser1Output),
+              laser2: () => sum(m.laser2Output, r.laser2Output),
               shipped: () => sum(m.shipped, r.shipped),
               target: () => r.target ?? m.target,
               counterAt: () => [m.counterAt, r.counterAt].nonNulls.fold<int?>(null, (a, t) => a == null || t < a ? t : a),
               note: [m.note, r.note].where((n) => n.isNotEmpty).join(' · '),
               scanPos: () => [m.scanPos, r.scanPos].nonNulls.fold<int?>(null, (a, p) => a == null || p > a ? p : a),
+              scanPos2: () => [m.scanPos2, r.scanPos2].nonNulls.fold<int?>(null, (a, p) => a == null || p > a ? p : a),
               fromPrinter: m.fromPrinter || r.fromPrinter,
               product: m.product.isEmpty ? r.product : m.product,
               total: () => r.total ?? m.total,
               totalReset: m.totalReset || r.totalReset,
+              total2: () => r.total2 ?? m.total2,
+              totalReset2: m.totalReset2 || r.totalReset2,
             );
     }
     return merged;

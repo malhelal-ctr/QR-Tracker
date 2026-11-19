@@ -27,9 +27,11 @@ class ProgressStats {
     required Iterable<Day> days,
     required String periodEnd,
     int? defaultTarget,
+    int? Function(Day day)? counterFor,
     DateTime? now,
   }) {
     now ??= DateTime.now();
+    counterFor ??= (day) => day.counter;
     final total = codes.length;
     final valid = scans.where((x) => x.pos != null).toList();
     final last = valid.lastOrNull;
@@ -51,8 +53,9 @@ class ProgressStats {
     int? todayPrinted;
     Scan? since;
     var todayScans = todays.length;
-    if (today?.counter case final counter?) {
-      todayPrinted = counter;
+    final loggedToday = today == null ? null : counterFor(today);
+    if (loggedToday != null) {
+      todayPrinted = loggedToday;
       todayScans = 0;
     } else if (todays.isNotEmpty) {
       since = todays.first;
@@ -67,9 +70,9 @@ class ProgressStats {
       if (daysLeft > 0) suggested = (remaining / daysLeft).ceil();
     }
 
-    final logged = days.where((d) => d.counter != null).toList()..sort((a, b) => a.date.compareTo(b.date));
+    final logged = days.where((d) => counterFor!(d) != null).toList()..sort((a, b) => a.date.compareTo(b.date));
     final recent = logged.length > 7 ? logged.sublist(logged.length - 7) : logged;
-    final avg = recent.isEmpty ? null : (recent.fold<int>(0, (a, d) => a + d.counter!) / recent.length).round();
+    final avg = recent.isEmpty ? null : (recent.fold<int>(0, (a, d) => a + counterFor!(d)!) / recent.length).round();
     final finish = avg != null && avg > 0 && remaining > 0 ? startToday.add(Duration(days: (remaining / avg).ceil() - 1)) : null;
 
     return ProgressStats(

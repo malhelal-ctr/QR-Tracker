@@ -7,6 +7,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../core/data/tracker_repository.dart';
+import '../../../core/data/models.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/camera_probe.dart';
 import '../../../core/utils/format.dart';
@@ -98,25 +99,59 @@ class _ScanViewState extends State<_ScanView> {
 
   /// True while the Log by scan popup is open; camera reads are ignored meanwhile.
   bool _logging = false;
+  bool _choosingMachine = false;
+
+  Future<LaserMachine?> _chooseMachine(String code) async {
+    final matches = context.read<TrackerRepository>().machinesForCode(code);
+    if (matches.length <= 1) return matches.firstOrNull;
+    if (_choosingMachine) return null;
+    _choosingMachine = true;
+    try {
+      return await showDialog<LaserMachine>(
+        context: context,
+        builder: (dialog) => SimpleDialog(
+          title: const Text('Code is in both batches'),
+          children: [
+            Padding(padding: EdgeInsets.symmetric(horizontal: 24.r, vertical: 4.r), child: Text('Which machine printed this code?', style: sans(14, color: C.onVariant))),
+            for (final machine in matches)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(dialog, machine),
+                child: ListTile(leading: const Icon(Icons.precision_manufacturing_outlined), title: Text(machine.label)),
+              ),
+          ],
+        ),
+      );
+    } finally {
+      _choosingMachine = false;
+    }
+  }
 
   /// A scanned or typed code: checked as usual, or with Log by scan on, the counter popup for the day
   /// (yesterday by default, as in the morning log). Confirming records the scan and saves the log.
   Future<void> _onCode(String code, {bool fromCamera = false}) async {
     final cubit = context.read<ScanCubit>();
-    if (!cubit.state.logMode) return cubit.submit(code, fromCamera: fromCamera);
+    final machine = await _chooseMachine(code);
+    if (!mounted) return;
+    if (context.read<TrackerRepository>().machinesForCode(code).length > 1 && machine == null) return;
+    if (!cubit.state.logMode) return cubit.submit(code, fromCamera: fromCamera, machine: machine);
     if (_logging || code.trim().isEmpty) return;
     _logging = true;
     try {
       final repository = context.read<TrackerRepository>();
       final yesterday = DateTime.now().subtract(const Duration(days: 1));
       unawaited(HapticFeedback.mediumImpact());
-      final choice = await showScanLogDialog(context, repository.scanLogDraft(code, yesterday), draftFor: (d) => repository.scanLogDraft(code, d));
+      final selected = machine ?? LaserMachine.laser1;
+      final choice = await showScanLogDialog(
+        context,
+        repository.scanLogDraft(code, yesterday, machine: selected),
+        draftFor: (d) => repository.scanLogDraft(code, d, machine: selected),
+      );
       if (choice case ScanLogConfirm(:final draft, :final counter)) {
-        await cubit.submit(code);
+        await cubit.submit(code, machine: selected);
         await repository.saveScanLog(draft, counter);
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          showSnack(context, '${fmtDate(draft.date)} logged: ${fmt(counter)} printed');
+            showSnack(context, '${draft.machine.label} · ${fmtDate(draft.date)} logged: ${fmt(counter)} printed');
         }
       }
       // "Scan again" and Cancel just close the popup; the camera keeps running
@@ -141,7 +176,7 @@ class _ScanViewState extends State<_ScanView> {
             if (r == null || !r.inList) return;
             // replace the previous toast instead of queueing behind it during fast scanning
             ScaffoldMessenger.of(context).hideCurrentSnackBar();
-            showSnack(context, 'Scan successful · #${fmt(r.scan.pos!)} of ${fmt(r.total)}');
+            showSnack(context, '${r.scan.machine.label} · scan successful · #${fmt(r.scan.pos!)} of ${fmt(r.total)}');
           },
         ),
       ],
@@ -156,7 +191,7 @@ class _ScanViewState extends State<_ScanView> {
                     const Icon(Icons.info_outline, color: C.warning),
                     SizedBox(width: 12.r),
                     Expanded(
-                      child: Text('No QR list imported yet. Scans are saved, but positions show only after you import the list in Data.', style: sans(14)),
+                      child: Text('No QR batch imported yet. Import a batch for Laser 1 or Laser 2 in Data.', style: sans(14)),
                     ),
                   ]),
                 );

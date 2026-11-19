@@ -38,23 +38,24 @@ class ScanBaseline {
 /// for an earlier day, else the highest code scanned before [date] began, else the start of the list;
 /// plus the printed counts logged for the days after that and before [date]. [listStart] (yyyy-MM-dd,
 /// the list's import day) leaves out days logged before the list was in use.
-ScanBaseline scanBaseline({required String date, required Iterable<Day> days, required Iterable<Scan> scans, String? listStart}) {
+ScanBaseline scanBaseline({required String date, required Iterable<Day> days, required Iterable<Scan> scans, String? listStart, LaserMachine machine = LaserMachine.laser1}) {
   ({int sum, int count}) loggedAfter(String? after) {
     var sum = 0, count = 0;
     for (final d in days) {
-      if (d.counter == null || d.date.compareTo(date) >= 0) continue;
+      final output = d.outputFor(machine);
+      if (output == null || d.date.compareTo(date) >= 0) continue;
       if (after != null && d.date.compareTo(after) <= 0) continue;
       if (listStart != null && d.date.compareTo(listStart) < 0) continue;
-      sum += d.counter!;
+      sum += output;
       count++;
     }
     return (sum: sum, count: count);
   }
 
-  final log = days.where((d) => d.scanPos != null && d.date.compareTo(date) < 0).fold<Day?>(null, (a, d) => a == null || d.date.compareTo(a.date) > 0 ? d : a);
+  final log = days.where((d) => d.scanPositionFor(machine) != null && d.date.compareTo(date) < 0).fold<Day?>(null, (a, d) => a == null || d.date.compareTo(a.date) > 0 ? d : a);
   if (log != null) {
     final since = loggedAfter(log.date);
-    return ScanBaseline(anchorPos: log.scanPos!, source: BaselineSource.log, at: DateTime.parse(log.date), logged: since.sum, loggedDays: since.count);
+    return ScanBaseline(anchorPos: log.scanPositionFor(machine)!, source: BaselineSource.log, at: DateTime.parse(log.date), logged: since.sum, loggedDays: since.count);
   }
 
   final start = DateTime.parse(date).millisecondsSinceEpoch;
@@ -73,9 +74,10 @@ ScanBaseline scanBaseline({required String date, required Iterable<Day> days, re
 
 /// A code scanned for Log by scan, before the counter is confirmed.
 class ScanLogDraft {
-  const ScanLogDraft({required this.code, required this.date, required this.baseline, this.pos, this.loggedCounter, this.loggedPos});
+  const ScanLogDraft({required this.code, required this.date, required this.baseline, this.machine = LaserMachine.laser1, this.pos, this.loggedCounter, this.loggedPos});
 
   final String code;
+  final LaserMachine machine;
 
   /// Production day the log is for.
   final DateTime date;

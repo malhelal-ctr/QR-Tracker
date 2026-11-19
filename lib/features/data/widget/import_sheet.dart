@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/data/models.dart';
 import '../../../core/utils/format.dart';
 import '../../../core/utils/responsive.dart';
 import '../../../core/widgets/app_widgets.dart';
@@ -9,10 +10,10 @@ import '../model/import_preview.dart';
 
 /// Bottom sheet showing the picked file before import. Pops with true once imported.
 class ImportSheet extends StatefulWidget {
-  const ImportSheet({super.key, required this.preview, required this.hasExistingList, required this.onImport, this.products = const []});
+  const ImportSheet({super.key, required this.preview, required this.existingMachines, required this.onImport, this.products = const []});
 
   final ImportPreview preview;
-  final bool hasExistingList;
+  final Set<LaserMachine> existingMachines;
 
   /// Products used so far, to pick from.
   final List<String> products;
@@ -61,6 +62,21 @@ class _ImportSheetState extends State<ImportSheet> {
                 ]),
               ),
               SizedBox(height: 12.r),
+              const MicroLabel('Machine', icon: Icons.precision_manufacturing_outlined),
+              SizedBox(height: 8.r),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<LaserMachine>(
+                  segments: [for (final machine in LaserMachine.values) ButtonSegment(value: machine, label: Text(machine.label))],
+                  selected: {_preview.machine},
+                  onSelectionChanged: (v) => setState(() => _preview = _preview.copyWith(machine: v.single)),
+                ),
+              ),
+              if (widget.existingMachines.contains(_preview.machine)) ...[
+                SizedBox(height: 8.r),
+                Text('${_preview.machine.label} already has an active batch. Importing will replace only that machine’s batch.', style: sans(13, color: C.warning)),
+              ],
+              SizedBox(height: 12.r),
               ProductField(label: 'Product group', products: widget.products, onChanged: (v) => setState(() => _preview = _preview.copyWith(product: v))),
               SizedBox(height: 12.r),
               _CheckTile(
@@ -69,7 +85,7 @@ class _ImportSheetState extends State<ImportSheet> {
                 title: 'First row is a header',
                 subtitle: 'Skip the first row (a column title like “QR Code”)',
               ),
-              if (widget.hasExistingList) ...[
+              if (widget.existingMachines.contains(_preview.machine)) ...[
                 SizedBox(height: 10.r),
                 _CheckTile(
                   value: _preview.clearScans,

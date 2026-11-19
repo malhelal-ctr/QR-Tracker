@@ -2,10 +2,12 @@
 
 Mobile app for tracking a laser QR printing machine. Android APK + web PWA from one Flutter codebase.
 
-- **Import** your QR list (CSV / TXT / XLSX, one column, in print order)
-- **Scan** the code the machine is printing → `#12,450 of 30,000`, % done, remaining, since last scan, next code
+- **Import** a separate QR list for Laser 1 and Laser 2 (CSV / TXT / XLSX, one column, in print order)
+- **Scan** the code either machine is printing → the matching batch identifies the laser and shows `#12,450 of 30,000`, % done, remaining, since last scan, next code
+  - if a code exists in both active batches, choose Laser 1 or Laser 2 before it is recorded
   - flashlight button, "light code on dark surface" switch for laser-marked codes, manual entry
-- **Daily log** each morning: machine counter (before reset) + day's target; history with +/- vs target
+- **Daily log** each morning: Laser 1 and Laser 2 output counters + day's target; combined history with +/- vs target
+  - each laser also has its own cumulative machine-total readings, reset history and output reconciliation
 - **Dashboard**: print position, today's progress vs target, avg per day, estimated finish, needed per day
 - **Lid stock**: log deliveries received, waste and physical stock counts; usage comes from the daily
   machine counter (1 lid per printed code). Shows lids on hand (live, minus today's scanned printing),

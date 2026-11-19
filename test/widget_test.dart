@@ -320,6 +320,22 @@ void main() {
     expect(s.isPast, isFalse);
   });
 
+  test('MonthSummary checks Laser 2 total against only Laser 2 daily output', () {
+    final s = MonthSummary.compute(
+      month: DateTime(2026, 11),
+      days: {
+        '2026-10-31': const Day(date: '2026-10-31', total2: 1000),
+        '2026-11-01': const Day(date: '2026-11-01', counter: 700, laser1: 500, laser2: 200, total2: 1200),
+        '2026-11-02': const Day(date: '2026-11-02', counter: 700, laser1: 400, laser2: 300, total2: 1550),
+      },
+      dailyTarget: null,
+      isOff: (_) => false,
+      now: DateTime(2026, 11, 3),
+    );
+    expect(s.days.take(2).map((d) => d.gap2), [0, 50]);
+    expect((s.machinePrinted2, s.machineLogged2, s.unaccounted2, s.totalWarnings), (550, 500, 50, 1));
+  });
+
   test('Day.mergeByDate: records on one date add up, latest target wins, notes join', () {
     final merged = Day.mergeByDate(const [
       Day(id: '1', date: '2026-10-25', counter: 3000, counterAt: 20, target: 8000, note: 'morning'),
@@ -330,6 +346,23 @@ void main() {
     final d = merged['2026-10-25']!;
     expect((d.id, d.counter, d.shipped, d.target, d.counterAt, d.note), ('1', 7500, 2000, 9000, 10, 'morning · night shift'));
     expect(merged['2026-10-24']!.counter, 7000);
+  });
+
+  test('Day keeps two laser outputs and uses their combined output for stock and totals', () {
+    const day = Day(date: '2026-11-19', counter: 12000, laser1: 7000, laser2: 5000, counterAt: 20);
+    final restored = Day.fromMap(day.toMap());
+    expect((restored.laser1Output, restored.laser2Output, restored.counter), (7000, 5000, 12000));
+
+    // Records created before two-laser support are treated as Laser 1 without changing their stored total.
+    final old = Day.fromMap({'date': '2026-11-18', 'counter': 6000});
+    expect((old.laser1Output, old.laser2Output, old.counter), (6000, null, 6000));
+
+    final stock = StockStats.compute(
+      moves: const [StockMove(ts: 10, date: '2026-11-19', type: StockMoveType.count, qty: 50000)],
+      days: const [day],
+      remainingCodes: 0,
+    );
+    expect((stock.usedSinceCount, stock.onHand), (12000, 38000));
   });
 
 
@@ -515,12 +548,12 @@ void main() {
     });
     final repo = TrackerRepository();
     await repo.init(path: dir.path);
-    await repo.saveLog(date: '2026-11-04', counter: 11500, total: null, note: 'kept');
+    await repo.saveLog(date: '2026-11-04', counter: 11500, laser1: 6500, laser2: 5000, total: null, note: 'kept');
 
     // a reading on a logged day keeps its printed count and note
-    await repo.saveMachineReading(date: '2026-11-04', total: 1000000);
+    await repo.saveMachineReadings(date: '2026-11-04', laser1: 1000000, reset1: false, laser2: 250000, reset2: false);
     final day = repo.days['2026-11-04']!;
-    expect((day.counter, day.note, day.total, day.totalReset), (11500, 'kept', 1000000, false));
+    expect((day.laser1Output, day.laser2Output, day.counter, day.note, day.total, day.total2), (6500, 5000, 11500, 'kept', 1000000, 250000));
 
     // a reading on a day with no daily log adds only the reading: printing stays unlogged
     await repo.saveMachineReading(date: '2026-11-05', total: 1500, reset: true);
@@ -532,7 +565,9 @@ void main() {
     await repo.saveMachineReading(date: '2026-11-05', total: null);
     expect(repo.days['2026-11-05'], isNull);
     await repo.saveMachineReading(date: '2026-11-04', total: null);
-    expect((repo.days['2026-11-04']!.counter, repo.days['2026-11-04']!.total), (11500, null));
+    expect((repo.days['2026-11-04']!.counter, repo.days['2026-11-04']!.total, repo.days['2026-11-04']!.total2), (11500, null, 250000));
+    await repo.saveMachineReading(date: '2026-11-04', total: null, machine: LaserMachine.laser2);
+    expect((repo.days['2026-11-04']!.counter, repo.days['2026-11-04']!.total2), (11500, null));
   });
 
   test('TrackerRepository: weekend and holidays are days off; a single day can be switched', () async {
@@ -741,6 +776,60 @@ void main() {
     final stray = await repo.addScan(' XX-1 ');
     expect((stray.code, stray.pos), ('XX-1', null));
     expect(repo.scanLogDraft('LT2026000001', DateTime(2026, 11, 4)).code, 'LT-2026-000001');
+  });
+
+  test('TrackerRepository: two machines keep batches, scans, progress and archives separate', () async {
+    final dir = await Directory.systemTemp.createTemp('qr_tracker_two_machines');
+    addTearDown(() async {
+      await Hive.close();
+      await dir.delete(recursive: true);
+    });
+    final repo = TrackerRepository();
+    await repo.init(path: dir.path);
+    await repo.importCodes(['A1', 'A2', 'SHARED'], 'laser-1.xlsx', clearScans: true, product: 'P1');
+    await repo.importCodes(
+      ['B1', 'B2', 'SHARED'],
+      'laser-2.xlsx',
+      clearScans: true,
+      product: 'P2',
+      machine: LaserMachine.laser2,
+    );
+
+    expect(repo.machinesForCode('A2'), [LaserMachine.laser1]);
+    expect(repo.machinesForCode('B2'), [LaserMachine.laser2]);
+    expect(repo.machinesForCode('SHARED'), [LaserMachine.laser1, LaserMachine.laser2]);
+
+    await repo.addScan('A2');
+    await repo.addScan('B2');
+    await repo.addScan('SHARED', machine: LaserMachine.laser2);
+    expect((repo.progressFor(LaserMachine.laser1).printed, repo.progressFor(LaserMachine.laser2).printed), (2, 3));
+    expect(repo.scansFor(LaserMachine.laser1).map((s) => s.code), ['A2']);
+    expect(repo.scansFor(LaserMachine.laser2).map((s) => s.code), ['B2', 'SHARED']);
+
+    final logDate = DateTime.now();
+    final draft = repo.scanLogDraft('SHARED', logDate, machine: LaserMachine.laser2);
+    await repo.saveScanLog(draft, 3);
+    final logged = repo.days[ymd(logDate)]!;
+    expect((logged.laser1Output, logged.laser2Output, logged.counter, logged.scanPos2), (null, 3, 3, 3));
+
+    final backup = repo.backupJson();
+    await repo.archiveList(machine: LaserMachine.laser2);
+    expect(repo.codesFor(LaserMachine.laser1), ['A1', 'A2', 'SHARED']);
+    expect(repo.codesFor(LaserMachine.laser2), isEmpty);
+    expect(repo.scansFor(LaserMachine.laser1).length, 1);
+    expect((repo.archivedLists.single.machine, repo.archivedLists.single.fileName), (LaserMachine.laser2, 'laser-2.xlsx'));
+
+    await repo.restore(backup);
+    expect((repo.fileNameFor(LaserMachine.laser1), repo.fileNameFor(LaserMachine.laser2)), ('laser-1.xlsx', 'laser-2.xlsx'));
+    expect((repo.scansFor(LaserMachine.laser1).length, repo.scansFor(LaserMachine.laser2).length), (1, 2));
+  });
+
+  test('old scans and archived lists migrate to Laser 1', () {
+    expect(Scan.fromMap({'ts': 1, 'code': 'A1', 'pos': 1}).machine, LaserMachine.laser1);
+    expect(
+      ArchivedList.fromMap({'id': '1', 'fileName': 'old.xlsx', 'codeText': 'A1', 'total': 1, 'printed': 1, 'logged': 1, 'archivedAt': 1}).machine,
+      LaserMachine.laser1,
+    );
   });
 
   test('ScanCubit opens on the last saved scan, and drops it when the scans are cleared', () async {

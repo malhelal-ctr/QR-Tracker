@@ -33,7 +33,7 @@ class ListHistoryCard extends StatelessWidget {
                     ActionRow(
                       icon: Icons.history,
                       title: list.fileName,
-                      subtitle: '${fmt(list.total)} codes · ${fmt(list.scans.length)} scans · archived ${fmtTime(list.archivedAt)}',
+                      subtitle: '${list.machine.label} · ${fmt(list.total)} codes · ${fmt(list.scans.length)} scans · archived ${fmtTime(list.archivedAt)}',
                       onTap: () => onOpen(list),
                     ),
                 ],

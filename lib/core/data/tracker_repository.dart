@@ -25,9 +25,13 @@ class TrackerRepository {
   final _changes = StreamController<void>.broadcast();
 
   List<String> _codes = [];
+  List<String> _codes2 = [];
   String _fileName = '';
+  String _fileName2 = '';
   String _product = '';
+  String _product2 = '';
   int? _importedAt;
+  int? _importedAt2;
   String _periodEnd = '';
   int? _lowStock;
   int _lidLeadTime = 2;
@@ -52,14 +56,19 @@ class TrackerRepository {
   List<PrinterReading> _readings = [];
   List<ArchivedList> _archived = [];
   Map<String, int> _index = {};
+  Map<String, int> _index2 = {};
 
   Stream<void> get changes => _changes.stream;
   List<String> get codes => List.unmodifiable(_codes);
   String get fileName => _fileName;
+  List<String> codesFor(LaserMachine machine) => List.unmodifiable(machine == LaserMachine.laser1 ? _codes : _codes2);
+  String fileNameFor(LaserMachine machine) => machine == LaserMachine.laser1 ? _fileName : _fileName2;
 
   /// Product the active list's codes are printed for; empty when none was set.
   String get product => _product;
+  String productFor(LaserMachine machine) => machine == LaserMachine.laser1 ? _product : _product2;
   int? get importedAt => _importedAt;
+  int? importedAtFor(LaserMachine machine) => machine == LaserMachine.laser1 ? _importedAt : _importedAt2;
   String get periodEnd => _periodEnd;
   int? get lowStock => _lowStock;
 
@@ -112,7 +121,7 @@ class TrackerRepository {
   Day? logOn(String date) => _entryMap.values.where((d) => d.date == date && d.hasLog).firstOrNull ?? entryOn(date);
 
   /// The latest machine total logged before [date].
-  ({String date, int total})? totalBefore(String date) => previousTotal(date, _dayMap.values);
+  ({String date, int total})? totalBefore(String date, {LaserMachine machine = LaserMachine.laser1}) => previousTotal(date, _dayMap.values, machine: machine);
 
   /// Printed lids already in store when shipment tracking started, and that date (yyyy-MM-dd).
   int? get shipStartQty => _shipStartQty;
@@ -120,6 +129,7 @@ class TrackerRepository {
 
   ShippingStats get shipping => ShippingStats.compute(days: _dayMap.values, startQty: _shipStartQty, startDate: _shipStartDate);
   List<Scan> get scans => List.unmodifiable(_scanList);
+  List<Scan> scansFor(LaserMachine machine) => List.unmodifiable(_scanList.where((s) => s.machine == machine));
 
   /// Log records by id; a date can have several. Lists and editing work on these.
   Map<String, Day> get entries => Map.unmodifiable(_entryMap);
@@ -139,7 +149,7 @@ class TrackerRepository {
   /// Products added or used so far, one spelling each, to pick from so records of a product group together.
   List<String> get products {
     final names = <String, String>{};
-    for (final p in [..._productNames, _product, ..._archived.map((a) => a.product), ..._entryMap.values.map((d) => d.product)]) {
+    for (final p in [..._productNames, _product, _product2, ..._archived.map((a) => a.product), ..._entryMap.values.map((d) => d.product)]) {
       if (p.isNotEmpty) names.putIfAbsent(p.toLowerCase(), () => p);
     }
     return names.values.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
@@ -149,20 +159,29 @@ class TrackerRepository {
         for (final name in products)
           ProductStats.compute(
             name: name,
-            activeCodes: _product.toLowerCase() == name.toLowerCase() ? _codes.length : 0,
+            activeCodes: (_product.toLowerCase() == name.toLowerCase() ? _codes.length : 0) + (_product2.toLowerCase() == name.toLowerCase() ? _codes2.length : 0),
             archived: _archived,
             records: _entryMap.values,
           ),
       ];
 
-  ProgressStats get progress => ProgressStats.compute(codes: _codes, scans: _scanList, days: _dayMap.values, periodEnd: _periodEnd, defaultTarget: targetFor(Day(date: ymd(DateTime.now()))));
+  ProgressStats get progress => progressFor(LaserMachine.laser1);
+
+  ProgressStats progressFor(LaserMachine machine) => ProgressStats.compute(
+        codes: codesFor(machine),
+        scans: scansFor(machine),
+        days: _dayMap.values,
+        periodEnd: _periodEnd,
+        defaultTarget: targetFor(Day(date: ymd(DateTime.now()))),
+        counterFor: (day) => day.outputFor(machine),
+      );
 
   StockStats get stock {
-    final p = progress;
+    final remaining = LaserMachine.values.fold<int>(0, (a, machine) => a + progressFor(machine).remaining);
     final now = DateTime.now();
     final average = workingDayAverage(days: _dayMap.values, isOff: isOff, today: now);
     // per record: each counter is checked against the stock count by its own log time
-    final stats = StockStats.compute(moves: _stockMoves, days: _entryMap.values, remainingCodes: p.remaining, avgDailyUse: average, lowStock: _lowStock);
+    final stats = StockStats.compute(moves: _stockMoves, days: _entryMap.values, remainingCodes: remaining, avgDailyUse: average, lowStock: _lowStock);
     if (!stats.hasData) return stats;
     final forecast = LidForecast.compute(
       onHand: stats.onHand,
@@ -189,37 +208,42 @@ class TrackerRepository {
   Future<void> setLidNotifiedOn(String date) => _kv.put('lidNotifiedOn', date);
 
   /// Scan of the highest code so far, i.e. how far the machine has got.
-  Scan? get highestScan => _scanList.where((s) => s.pos != null).fold<Scan?>(null, (a, s) => a == null || s.pos! > a.pos! ? s : a);
+  Scan? highestScanFor(LaserMachine machine) => scansFor(machine).where((s) => s.pos != null).fold<Scan?>(null, (a, s) => a == null || s.pos! > a.pos! ? s : a);
+  Scan? get highestScan => highestScanFor(LaserMachine.laser1);
 
   /// 1-based print position of [code] in the imported list, null when it is not in it.
-  int? positionOf(String code) => _index[_key(code)];
+  int? positionOf(String code, {LaserMachine machine = LaserMachine.laser1}) => (machine == LaserMachine.laser1 ? _index : _index2)[_key(code)];
+
+  List<LaserMachine> machinesForCode(String code) => [for (final machine in LaserMachine.values) if (positionOf(code, machine: machine) != null) machine];
 
   /// Codes are matched without dashes or spaces and ignoring case, so `lt 2026012450` finds `LT-2026-012450`.
   static String _key(String code) => code.replaceAll(RegExp(r'[-\s]'), '').toUpperCase();
 
   /// [code] as written in the list when it is in it, else as typed.
-  String _listCode(String code, int? pos) => pos == null ? code.trim() : _codes[pos - 1];
+  String _listCode(String code, int? pos, LaserMachine machine) => pos == null ? code.trim() : codesFor(machine)[pos - 1];
 
   /// Where the machine stood when [date] (yyyy-MM-dd) began, for Log by scan.
-  ScanBaseline scanBaselineFor(String date) => scanBaseline(
+  ScanBaseline scanBaselineFor(String date, {LaserMachine machine = LaserMachine.laser1}) => scanBaseline(
         date: date,
         days: _dayMap.values,
-        scans: _scanList,
-        listStart: _importedAt == null ? null : ymd(DateTime.fromMillisecondsSinceEpoch(_importedAt!)),
+        scans: scansFor(machine),
+        listStart: importedAtFor(machine) == null ? null : ymd(DateTime.fromMillisecondsSinceEpoch(importedAtFor(machine)!)),
+        machine: machine,
       );
 
   /// Log by scan: the counter worked out from a scanned [code] for production day [date].
   /// What is already logged for that day (all its records) is passed along, so a scan can't silently lower it.
-  ScanLogDraft scanLogDraft(String code, DateTime date) {
+  ScanLogDraft scanLogDraft(String code, DateTime date, {LaserMachine machine = LaserMachine.laser1}) {
     final logged = _dayMap[ymd(date)];
-    final pos = positionOf(code);
+    final pos = positionOf(code, machine: machine);
     return ScanLogDraft(
-      code: _listCode(code, pos),
+      code: _listCode(code, pos, machine),
       date: date,
+      machine: machine,
       pos: pos,
-      baseline: scanBaselineFor(ymd(date)),
-      loggedCounter: logged?.counter,
-      loggedPos: logged?.scanPos,
+      baseline: scanBaselineFor(ymd(date), machine: machine),
+      loggedCounter: logged?.outputFor(machine),
+      loggedPos: logged?.scanPositionFor(machine),
     );
   }
 
@@ -228,11 +252,20 @@ class TrackerRepository {
   Future<void> saveScanLog(ScanLogDraft draft, int counter) async {
     final key = ymd(draft.date);
     final existing = logOn(key) ?? Day(date: key);
-    await saveDay(existing.copyWith(counter: () => counter, scanPos: () => draft.savePos));
+    final laser1 = draft.machine == LaserMachine.laser1 ? counter : existing.laser1Output;
+    final laser2 = draft.machine == LaserMachine.laser2 ? counter : existing.laser2Output;
+    await saveDay(existing.copyWith(
+      counter: () => (laser1 ?? 0) + (laser2 ?? 0),
+      laser1: () => laser1,
+      laser2: () => laser2,
+      product: existing.product.isEmpty ? productFor(draft.machine) : existing.product,
+      scanPos: draft.machine == LaserMachine.laser1 ? () => draft.savePos : null,
+      scanPos2: draft.machine == LaserMachine.laser2 ? () => draft.savePos : null,
+    ));
   }
 
   /// Code that follows [pos] in print order, if any.
-  String? codeAfter(int pos) => pos < _codes.length ? _codes[pos] : null;
+  String? codeAfter(int pos, {LaserMachine machine = LaserMachine.laser1}) => pos < codesFor(machine).length ? codesFor(machine)[pos] : null;
 
   /// [path]: a plain folder for the data instead of the app's storage (tests).
   Future<void> init({String? path}) async {
@@ -268,14 +301,19 @@ class TrackerRepository {
       final merged = Day.mergeByDate(logs.map((d) => d.copyWith(shipped: () => null))).values.single;
       await _putRaw(keep.copyWith(
         counter: () => merged.counter,
+        laser1: () => merged.laser1,
+        laser2: () => merged.laser2,
         counterAt: () => merged.counterAt,
         target: () => merged.target,
         note: merged.note,
         scanPos: () => merged.scanPos,
+        scanPos2: () => merged.scanPos2,
         fromPrinter: merged.fromPrinter,
         product: merged.product,
         total: () => merged.total,
         totalReset: merged.totalReset,
+        total2: () => merged.total2,
+        totalReset2: merged.totalReset2,
       ));
       for (final other in logs.skip(1)) {
         final rest = _withoutLog(other);
@@ -309,13 +347,18 @@ class TrackerRepository {
   /// The record with its production log taken out (a shipment stays).
   static Day _withoutLog(Day d) => d.copyWith(
         counter: () => null,
+        laser1: () => null,
+        laser2: () => null,
         counterAt: () => null,
         target: () => null,
         note: '',
         scanPos: () => null,
+        scanPos2: () => null,
         fromPrinter: false,
         total: () => null,
         totalReset: false,
+        total2: () => null,
+        totalReset2: false,
       );
 
   /// Stores a record as it is (no time or product stamping), for migrations.
@@ -359,7 +402,9 @@ class TrackerRepository {
 
   void _load() {
     final c = _kv.get('codes') as Map?;
-    _setCodes(c == null ? <String>[] : List<String>.from(c['list'] as List), c?['fileName'] as String? ?? '', c?['importedAt'] as int?, product: c?['product'] as String? ?? '');
+    _setCodes(c == null ? <String>[] : List<String>.from(c['list'] as List), c?['fileName'] as String? ?? '', c?['importedAt'] as int?, product: c?['product'] as String? ?? '', machine: LaserMachine.laser1);
+    final c2 = _kv.get('codes2') as Map?;
+    _setCodes(c2 == null ? <String>[] : List<String>.from(c2['list'] as List), c2?['fileName'] as String? ?? '', c2?['importedAt'] as int?, product: c2?['product'] as String? ?? '', machine: LaserMachine.laser2);
     final settings = _kv.get('settings') as Map?;
     _periodEnd = settings?['periodEnd'] as String? ?? '';
     _lowStock = settings?['lowStock'] as int?;
@@ -404,32 +449,52 @@ class TrackerRepository {
 
   Future<void> _saveSettings() => _kv.put('settings', _settings);
 
-  void _setCodes(List<String> list, String name, int? at, {String product = ''}) {
-    _codes = list;
-    _fileName = name;
-    _importedAt = at;
-    _product = product;
-    _index = {};
+  void _setCodes(List<String> list, String name, int? at, {String product = '', LaserMachine machine = LaserMachine.laser1}) {
+    if (machine == LaserMachine.laser1) {
+      _codes = list;
+      _fileName = name;
+      _importedAt = at;
+      _product = product;
+      _index = {};
+    } else {
+      _codes2 = list;
+      _fileName2 = name;
+      _importedAt2 = at;
+      _product2 = product;
+      _index2 = {};
+    }
+    final index = machine == LaserMachine.laser1 ? _index : _index2;
     for (var i = 0; i < list.length; i++) {
-      _index.putIfAbsent(_key(list[i]), () => i + 1);
+      index.putIfAbsent(_key(list[i]), () => i + 1);
     }
   }
 
-  Future<void> importCodes(List<String> list, String name, {required bool clearScans, String product = ''}) async {
+  Future<void> importCodes(List<String> list, String name, {required bool clearScans, String product = '', LaserMachine machine = LaserMachine.laser1}) async {
     final at = DateTime.now().millisecondsSinceEpoch;
-    await _kv.put('codes', {'list': list, 'fileName': name, 'importedAt': at, 'product': product});
+    await _kv.put(machine == LaserMachine.laser1 ? 'codes' : 'codes2', {'list': list, 'fileName': name, 'importedAt': at, 'product': product});
     if (clearScans) {
-      await _scans.clear();
-      _scanList = [];
+      final remove = [for (final key in _scans.keys) if (Scan.fromMap(_scans.get(key) as Map).machine == machine) key];
+      await _scans.deleteAll(remove);
+      _scanList = _scanList.where((s) => s.machine != machine).toList();
     }
-    _setCodes(list, name, at, product: product);
+    _setCodes(list, name, at, product: product, machine: machine);
     _changes.add(null);
   }
 
   /// Sets the product of the active list.
-  Future<void> setProduct(String value) async {
-    _product = value.trim();
-    await _kv.put('codes', {'list': _codes, 'fileName': _fileName, 'importedAt': _importedAt, 'product': _product});
+  Future<void> setProduct(String value, {LaserMachine machine = LaserMachine.laser1}) async {
+    final product = value.trim();
+    if (machine == LaserMachine.laser1) {
+      _product = product;
+    } else {
+      _product2 = product;
+    }
+    await _kv.put(machine == LaserMachine.laser1 ? 'codes' : 'codes2', {
+      'list': codesFor(machine),
+      'fileName': fileNameFor(machine),
+      'importedAt': importedAtFor(machine),
+      'product': product,
+    });
     _changes.add(null);
   }
 
@@ -456,7 +521,8 @@ class TrackerRepository {
     bool same(String p) => p.toLowerCase() == old.toLowerCase();
     _productNames = [for (final p in _productNames) same(p) ? name : p];
     await _saveSettings();
-    if (same(_product)) await setProduct(name);
+    if (same(_product)) await setProduct(name, machine: LaserMachine.laser1);
+    if (same(_product2)) await setProduct(name, machine: LaserMachine.laser2);
     for (final list in _archived.where((a) => same(a.product)).toList()) {
       await setArchivedProduct(list.id, name);
     }
@@ -475,38 +541,47 @@ class TrackerRepository {
 
   /// Moves the QR list and its scans to the list history, so the next list starts clean.
   /// Daily log records stay in the log: stock and shipping totals count them.
-  Future<void> archiveList() async {
+  Future<void> archiveList({LaserMachine machine = LaserMachine.laser1}) async {
     final at = DateTime.now().millisecondsSinceEpoch;
-    final from = _importedAt == null ? '' : ymd(DateTime.fromMillisecondsSinceEpoch(_importedAt!));
+    final importedAt = importedAtFor(machine);
+    final from = importedAt == null ? '' : ymd(DateTime.fromMillisecondsSinceEpoch(importedAt));
+    final machineScans = scansFor(machine);
     final entry = ArchivedList(
       id: _newId(),
-      fileName: _fileName,
-      codeText: _codes.join('\n'),
-      total: _codes.length,
-      printed: progress.printed,
-      logged: _dayMap.values.where((d) => d.date.compareTo(from) >= 0).fold(0, (a, d) => a + (d.counter ?? 0)),
+      fileName: fileNameFor(machine),
+      codeText: codesFor(machine).join('\n'),
+      total: codesFor(machine).length,
+      printed: progressFor(machine).printed,
+      logged: _dayMap.values.where((d) => d.date.compareTo(from) >= 0).fold(0, (a, d) => a + (d.outputFor(machine) ?? 0)),
       archivedAt: at,
-      importedAt: _importedAt,
-      scans: _scanList,
-      product: _product,
+      importedAt: importedAt,
+      scans: machineScans,
+      product: productFor(machine),
+      machine: machine,
     );
     // stored before anything is removed, so a failure part way can't lose the list
     await _archive.put(entry.id, entry.toMap());
-    await _kv.delete('codes');
-    await _scans.clear();
+    await _kv.delete(machine == LaserMachine.laser1 ? 'codes' : 'codes2');
+    final remove = [for (final key in _scans.keys) if (Scan.fromMap(_scans.get(key) as Map).machine == machine) key];
+    await _scans.deleteAll(remove);
     _archived = [entry, ..._archived];
-    _scanList = [];
-    _setCodes([], '', null);
+    _scanList = _scanList.where((s) => s.machine != machine).toList();
+    _setCodes([], '', null, machine: machine);
     // scan log positions belong to this list; the next list counts from its own start
-    for (final day in _entryMap.values.where((d) => d.scanPos != null).toList()) {
-      await saveDay(day.copyWith(scanPos: () => null));
+    for (final day in _entryMap.values.where((d) => d.scanPositionFor(machine) != null).toList()) {
+      await saveDay(day.copyWith(
+        scanPos: machine == LaserMachine.laser1 ? () => null : null,
+        scanPos2: machine == LaserMachine.laser2 ? () => null : null,
+      ));
     }
     _changes.add(null);
   }
 
-  Future<Scan> addScan(String text) async {
-    final pos = positionOf(text);
-    final scan = Scan(ts: DateTime.now().millisecondsSinceEpoch, code: _listCode(text, pos), pos: pos);
+  Future<Scan> addScan(String text, {LaserMachine? machine}) async {
+    final matches = machinesForCode(text);
+    machine ??= matches.length == 1 ? matches.single : LaserMachine.laser1;
+    final pos = positionOf(text, machine: machine);
+    final scan = Scan(ts: DateTime.now().millisecondsSinceEpoch, code: _listCode(text, pos, machine), pos: pos, machine: machine);
     await _scans.add(scan.toMap());
     _scanList.add(scan);
     _changes.add(null);
@@ -615,18 +690,27 @@ class TrackerRepository {
   Future<void> saveLog({
     required String date,
     required int? counter,
+    int? laser1,
+    int? laser2,
     required int? total,
+    int? total2,
     bool totalReset = false,
+    bool totalReset2 = false,
     int? target,
     String note = '',
     String product = '',
     int? scanPos,
   }) async {
     final existing = logOn(date) ?? Day(date: date);
+    final combined = laser1 == null && laser2 == null ? counter : (laser1 ?? 0) + (laser2 ?? 0);
     final day = existing.copyWith(
-      counter: () => counter,
+      counter: () => combined,
+      laser1: () => laser1,
+      laser2: () => laser2,
       total: () => total,
       totalReset: total != null && totalReset,
+      total2: () => total2,
+      totalReset2: total2 != null && totalReset2,
       target: () => target,
       note: note.trim(),
       product: product.trim(),
@@ -650,10 +734,35 @@ class TrackerRepository {
   /// Saves the machine's total counter read on [date], and whether it was reset before the reading.
   /// Only the machine reading changes: the day's printed count, target and note stay as they are.
   /// A null [total] removes the reading.
-  Future<void> saveMachineReading({required String date, required int? total, bool reset = false}) async {
+  Future<void> saveMachineReading({required String date, required int? total, bool reset = false, LaserMachine machine = LaserMachine.laser1}) async {
     final existing = logOn(date);
     if (existing == null && total == null) return;
-    final day = (existing ?? Day(date: date)).copyWith(total: () => total, totalReset: total != null && reset);
+    final day = machine == LaserMachine.laser1
+        ? (existing ?? Day(date: date)).copyWith(total: () => total, totalReset: total != null && reset)
+        : (existing ?? Day(date: date)).copyWith(total2: () => total, totalReset2: total != null && reset);
+    if (day.isEmpty) {
+      if (day.id.isNotEmpty) await deleteDay(day.id);
+    } else {
+      await saveDay(day);
+    }
+  }
+
+  /// Saves both cumulative counters together, without changing either machine's daily output.
+  Future<void> saveMachineReadings({
+    required String date,
+    required int? laser1,
+    required bool reset1,
+    required int? laser2,
+    required bool reset2,
+  }) async {
+    final existing = logOn(date);
+    if (existing == null && laser1 == null && laser2 == null) return;
+    final day = (existing ?? Day(date: date)).copyWith(
+      total: () => laser1,
+      totalReset: laser1 != null && reset1,
+      total2: () => laser2,
+      totalReset2: laser2 != null && reset2,
+    );
     if (day.isEmpty) {
       if (day.id.isNotEmpty) await deleteDay(day.id);
     } else {
@@ -698,9 +807,10 @@ class TrackerRepository {
   /// Same backup format as the web (Ionic) version, so backups move between them.
   String backupJson() => jsonEncode({
         'app': 'qr-tracker',
-        'version': 1,
+        'version': 2,
         'exportedAt': DateTime.now().millisecondsSinceEpoch,
         'codes': {'list': _codes, 'fileName': _fileName, 'importedAt': _importedAt, 'product': _product},
+        'codes2': {'list': _codes2, 'fileName': _fileName2, 'importedAt': _importedAt2, 'product': _product2},
         'settings': _settings,
         'days': _entryMap.values.map((d) => d.toMap()).toList(),
         'scans': _scanList.map((s) => s.toMap()).toList(),
@@ -715,6 +825,8 @@ class TrackerRepository {
     await Future.wait([_kv.clear(), _days.clear(), _scans.clear(), _stock.clear(), _printer.clear(), _archive.clear()]);
     final c = data['codes'] as Map? ?? {};
     await _kv.put('codes', {'list': List<String>.from(c['list'] as List? ?? []), 'fileName': c['fileName'] ?? '', 'importedAt': c['importedAt'], 'product': c['product'] ?? ''});
+    final c2 = data['codes2'] as Map? ?? {};
+    await _kv.put('codes2', {'list': List<String>.from(c2['list'] as List? ?? []), 'fileName': c2['fileName'] ?? '', 'importedAt': c2['importedAt'], 'product': c2['product'] ?? ''});
     final settings = data['settings'] as Map?;
     await _kv.put('settings', {...?settings});
     // older backups (and the Ionic version) store days without ids; they are given one below

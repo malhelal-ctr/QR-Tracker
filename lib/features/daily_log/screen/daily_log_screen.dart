@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/data/models.dart';
 import '../../../core/data/tracker_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
@@ -95,14 +96,20 @@ class _DailyLogViewState extends State<_DailyLogView> {
     final date = state.selected!;
     final entry = _cubit.entryFor(date);
     return MachineReadingSheet(
-      key: ValueKey('$date|${entry.log?.total}|${entry.log?.totalReset}'),
+      key: ValueKey('$date|${entry.log?.total}|${entry.log?.total2}|${entry.log?.totalReset}|${entry.log?.totalReset2}'),
       entry: entry,
       onClose: onClose,
       onDate: _cubit.open,
-      onSave: (total, reset) async {
-        await _cubit.saveMachineReading(date, total, reset);
+      onSave: (readings) async {
+        await _cubit.saveMachineReadings(
+          date,
+          laser1: readings.laser1,
+          reset1: readings.reset1,
+          laser2: readings.laser2,
+          reset2: readings.reset2,
+        );
         if (!mounted) return;
-        showSnack(context, total == null ? '${fmtDay(date)} reading deleted' : '${fmtDay(date)} machine total ${fmt(total)} saved${reset ? ' (reset)' : ''}');
+        showSnack(context, '${fmtDay(date)} machine readings saved');
         onClose();
       },
     );
@@ -114,7 +121,7 @@ class _DailyLogViewState extends State<_DailyLogView> {
     final log = entry.log;
     return LogEntryPanel(
       // a scan log or a save from elsewhere refills the fields
-      key: ValueKey('$date|${log?.id}|${log?.counter}|${log?.total}'),
+      key: ValueKey('$date|${log?.id}|${log?.laser1}|${log?.laser2}|${log?.total}|${log?.total2}'),
       entry: entry,
       products: state.products,
       onClose: onClose,
@@ -124,9 +131,13 @@ class _DailyLogViewState extends State<_DailyLogView> {
       onSave: (input) async {
         await _cubit.saveLog(
           date: date,
-          counter: input.counter,
+          counter: input.laser1 == null && input.laser2 == null ? null : (input.laser1 ?? 0) + (input.laser2 ?? 0),
+          laser1: input.laser1,
+          laser2: input.laser2,
           total: input.total,
+          total2: input.total2,
           totalReset: input.totalReset,
+          totalReset2: input.totalReset2,
           target: input.target,
           note: input.note,
           product: input.product,
@@ -145,7 +156,7 @@ class _DailyLogViewState extends State<_DailyLogView> {
   }
 
   /// Log by scan: scan the code being printed, check / edit the counter in the popup, then confirm or cancel.
-  /// "Scan again" in the popup goes back to the scanner. The day then opens in the panel for the machine total.
+  /// "Scan again" in the popup goes back to the scanner. The code's batch determines which laser is logged.
   Future<void> _logByScan(DateTime date) async {
     final cubit = _cubit;
     while (true) {
@@ -153,16 +164,38 @@ class _DailyLogViewState extends State<_DailyLogView> {
       final code = await ScanCodePage.open(
         context,
         title: 'Log by scan',
-        hint: 'Scan the code the machine is printing now. The counter for ${fmtDate(date)} is worked out from it.',
+        hint: 'Scan the code either laser is printing now. Its batch identifies the machine.',
       );
       if (code == null || !mounted) return;
-      final choice = await showScanLogDialog(context, cubit.draftFromScan(code, date), draftFor: (d) => cubit.draftFromScan(code, d));
+      final matches = context.read<TrackerRepository>().machinesForCode(code);
+      LaserMachine? machine = matches.length == 1 ? matches.single : null;
+      if (matches.length > 1) {
+        machine = await showDialog<LaserMachine>(
+          context: context,
+          builder: (dialog) => SimpleDialog(
+            title: const Text('Code is in both batches'),
+            children: [
+              Padding(padding: EdgeInsets.symmetric(horizontal: 24.r, vertical: 4.r), child: Text('Which machine printed this code?', style: sans(14, color: C.onVariant))),
+              for (final option in matches)
+                SimpleDialogOption(onPressed: () => Navigator.pop(dialog, option), child: ListTile(leading: const Icon(Icons.precision_manufacturing_outlined), title: Text(option.label))),
+            ],
+          ),
+        );
+        if (machine == null || !mounted) return;
+      }
+      machine ??= LaserMachine.laser1;
+      final selectedMachine = machine;
+      final choice = await showScanLogDialog(
+        context,
+        cubit.draftFromScan(code, date, machine: selectedMachine),
+        draftFor: (d) => cubit.draftFromScan(code, d, machine: selectedMachine),
+      );
       if (!mounted) return;
       switch (choice) {
         case ScanLogConfirm(:final draft, :final counter):
           await cubit.saveScanLog(draft, counter);
           if (!mounted) return;
-          showSnack(context, '${fmtDate(draft.date)} logged: ${fmt(counter)} printed');
+          showSnack(context, '${draft.machine.label} · ${fmtDate(draft.date)} logged: ${fmt(counter)} printed');
           // open the day so the machine total can be added
           _open(ymd(draft.date));
           return;
@@ -222,7 +255,7 @@ class _DailyLogViewState extends State<_DailyLogView> {
                     foregroundColor: Colors.white,
                     onPressed: () => _open(_cubit.defaultReadingDate, machine: true),
                     icon: const Icon(Icons.precision_manufacturing_outlined),
-                    label: Text('LOG READING', style: sans(14, weight: FontWeight.w700, spacing: 0.6, color: Colors.white)),
+                    label: Text('LOG READINGS', style: sans(14, weight: FontWeight.w700, spacing: 0.6, color: Colors.white)),
                   )
                 : Row(mainAxisSize: MainAxisSize.min, children: [
               FloatingActionButton.extended(

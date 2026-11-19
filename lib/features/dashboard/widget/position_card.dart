@@ -7,11 +7,12 @@ import '../../../core/utils/responsive.dart';
 import '../../../core/widgets/app_widgets.dart';
 
 class PositionCard extends StatelessWidget {
-  const PositionCard({super.key, required this.stats, required this.fileName, required this.onScan, this.product = ''});
+  const PositionCard({super.key, required this.stats, required this.fileName, required this.onScan, this.product = '', this.machine = ''});
 
   final ProgressStats stats;
   final String fileName;
   final String product;
+  final String machine;
   final VoidCallback onScan;
 
   @override
@@ -23,7 +24,7 @@ class PositionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Tile(color: C.high, padding: EdgeInsets.symmetric(horizontal: 10.r, vertical: 6.r), child: MicroLabel('Print position', icon: Icons.tune)),
+          Tile(color: C.high, padding: EdgeInsets.symmetric(horizontal: 10.r, vertical: 6.r), child: MicroLabel(machine.isEmpty ? 'Print position' : '$machine print position', icon: Icons.tune)),
           SizedBox(height: 14.r),
           FittedBox(
             fit: BoxFit.scaleDown,

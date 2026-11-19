@@ -1,6 +1,33 @@
 import '../../../core/data/models.dart';
 import '../../../core/data/tracker_repository.dart';
 
+class MachineListState {
+  const MachineListState({required this.machine, required this.fileName, required this.codeCount, required this.scanCount, required this.printed, required this.product, this.importedAt});
+
+  factory MachineListState.from(TrackerRepository repository, LaserMachine machine) {
+    final progress = repository.progressFor(machine);
+    return MachineListState(
+      machine: machine,
+      fileName: repository.fileNameFor(machine),
+      codeCount: repository.codesFor(machine).length,
+      scanCount: repository.scansFor(machine).length,
+      printed: progress.printed,
+      product: repository.productFor(machine),
+      importedAt: repository.importedAtFor(machine),
+    );
+  }
+
+  final LaserMachine machine;
+  final String fileName;
+  final int codeCount;
+  final int scanCount;
+  final int printed;
+  final String product;
+  final int? importedAt;
+  bool get hasList => codeCount > 0;
+  bool get complete => hasList && printed >= codeCount;
+}
+
 class DataState {
   const DataState({
     required this.fileName,
@@ -14,6 +41,7 @@ class DataState {
     this.product = '',
     this.products = const [],
     this.busy = false,
+    this.machineLists = const [],
   });
 
   factory DataState.from(TrackerRepository repository, {bool busy = false}) => DataState(
@@ -28,6 +56,7 @@ class DataState {
         product: repository.product,
         products: repository.products,
         busy: busy,
+        machineLists: [for (final machine in LaserMachine.values) MachineListState.from(repository, machine)],
       );
 
   final String fileName;
@@ -53,6 +82,10 @@ class DataState {
 
   /// True while a file is being read for import.
   final bool busy;
+  final List<MachineListState> machineLists;
+
+  MachineListState batchFor(LaserMachine machine) => machineLists.firstWhere((b) => b.machine == machine);
+  bool get hasAnyList => machineLists.any((b) => b.hasList);
 
   bool get hasList => codeCount > 0;
 
@@ -71,5 +104,6 @@ class DataState {
         product: product,
         products: products,
         busy: busy ?? this.busy,
+        machineLists: machineLists,
       );
 }

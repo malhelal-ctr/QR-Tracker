@@ -11,6 +11,8 @@ class LogEntry {
     this.log,
     this.previousTotal,
     this.previousTotalDate,
+    this.previousTotal2,
+    this.previousTotalDate2,
     this.monthTarget,
     this.off = false,
     this.product = '',
@@ -29,6 +31,11 @@ class LogEntry {
   /// The machine total logged before this day, and its date, to check this day's total against.
   final int? previousTotal;
   final String? previousTotalDate;
+  final int? previousTotal2;
+  final String? previousTotalDate2;
+
+  int? previousTotalFor(LaserMachine machine) => machine == LaserMachine.laser1 ? previousTotal : previousTotal2;
+  String? previousTotalDateFor(LaserMachine machine) => machine == LaserMachine.laser1 ? previousTotalDate : previousTotalDate2;
 
   /// The month's daily target (used when the day has no target of its own).
   final int? monthTarget;

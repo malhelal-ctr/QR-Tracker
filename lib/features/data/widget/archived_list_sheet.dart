@@ -24,7 +24,7 @@ class ArchivedListSheet extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const MicroLabel('Archived list', icon: Icons.history, color: C.primary),
+              MicroLabel('Archived ${list.machine.label} batch', icon: Icons.history, color: C.primary),
               SizedBox(height: 8.r),
               Text(list.fileName, maxLines: 2, overflow: TextOverflow.ellipsis, style: mono(22, weight: FontWeight.w700)),
               SizedBox(height: 4.r),

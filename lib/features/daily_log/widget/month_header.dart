@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/data/models.dart';
 import '../../../core/data/month_plan.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
@@ -139,13 +140,14 @@ class MonthHeader extends StatelessWidget {
                 if (worst != null) 'Worst ${fmtDay(worst.key)} (${fmtSigned(worst.diff!)})',
               ].join(' · '),
             ),
-          if (s.machinePrinted != null)
-            line(
-              s.unaccounted == 0 ? Icons.verified_outlined : Icons.precision_manufacturing_outlined,
-              'Machine total moved ${fmt(s.machinePrinted)} · logged ${fmt(s.machineLogged)}'
-              '${s.unaccounted == 0 ? ' · matches' : ' · ${fmt(s.unaccounted!.abs())} ${s.unaccounted! > 0 ? 'not logged' : 'logged more than the machine'}'}',
-              color: s.unaccounted == 0 ? C.success : C.warning,
-            ),
+          for (final machine in LaserMachine.values)
+            if (s.machinePrintedFor(machine) case final moved?)
+              line(
+                s.unaccountedFor(machine) == 0 ? Icons.verified_outlined : Icons.precision_manufacturing_outlined,
+                '${machine.label} total moved ${fmt(moved)} · logged ${fmt(s.machineLoggedFor(machine))}'
+                '${s.unaccountedFor(machine) == 0 ? ' · matches' : ' · ${fmt(s.unaccountedFor(machine)!.abs())} ${s.unaccountedFor(machine)! > 0 ? 'not logged' : 'logged more than the machine'}'}',
+                color: s.unaccountedFor(machine) == 0 ? C.success : C.warning,
+              ),
           if (s.totalWarnings > 0)
             line(
               Icons.warning_amber_rounded,

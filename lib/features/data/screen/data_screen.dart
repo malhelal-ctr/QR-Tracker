@@ -57,11 +57,11 @@ class _DataView extends StatelessWidget {
           constraints: BoxConstraints(maxWidth: 640.r),
           builder: (_) => ImportSheet(
             preview: preview,
-            hasExistingList: cubit.state.hasList,
+            existingMachines: {for (final batch in cubit.state.machineLists) if (batch.hasList) batch.machine},
             products: cubit.state.products,
             onImport: (p) async {
               final count = await cubit.importCodes(p);
-              if (context.mounted) showSnack(context, 'Imported ${fmt(count)} codes');
+              if (context.mounted) showSnack(context, 'Imported ${fmt(count)} codes for ${p.machine.label}');
             },
           ),
         );
@@ -69,19 +69,19 @@ class _DataView extends StatelessWidget {
       });
 
   /// Scans rarely hit the very last code, so a list can be archived before it shows as complete.
-  Future<void> _archive(BuildContext context, DataState state) => _run(context, () async {
+  Future<void> _archive(BuildContext context, MachineListState batch) => _run(context, () async {
         final cubit = context.read<DataCubit>();
-        final reached = state.complete ? 'The list' : 'Scans have reached ${fmt(state.printed)} of ${fmt(state.codeCount)} codes. The list';
-        final message = '$reached and its ${fmt(state.scanCount)} scans move to List history, and the app waits for a new list. The daily log stays as it is.';
-        if (!await confirm(context, 'Archive this list?', message, 'Archive')) return null;
-        await cubit.archiveList();
-        return 'List moved to List history';
+        final reached = batch.complete ? 'The list' : 'Scans have reached ${fmt(batch.printed)} of ${fmt(batch.codeCount)} codes. The list';
+        final message = '$reached and its ${fmt(batch.scanCount)} scans move to List history. ${batch.machine.label} then waits for a new batch; the other machine is unchanged.';
+        if (!await confirm(context, 'Archive ${batch.machine.label} batch?', message, 'Archive')) return null;
+        await cubit.archiveList(batch.machine);
+        return '${batch.machine.label} batch moved to List history';
       });
 
-  Future<void> _editProduct(BuildContext context, DataState state) async {
+  Future<void> _editProduct(BuildContext context, MachineListState batch) async {
     final cubit = context.read<DataCubit>();
-    final product = await showProductDialog(context, current: state.product, products: state.products);
-    if (product != null) await cubit.setProduct(product);
+    final product = await showProductDialog(context, current: batch.product, products: cubit.state.products);
+    if (product != null) await cubit.setProduct(product, batch.machine);
   }
 
   void _openArchived(BuildContext context, ArchivedList list) {
@@ -151,26 +151,27 @@ class _DataView extends StatelessWidget {
         // tablet: list and period on the left, export and danger zone on the right
         builder: (context, state) => TwoPane(
           left: [
-            SectionTitle('QR list', icon: Icons.qr_code_2, upper: true, trailing: MicroLabel('${fmt(state.scanCount)} scans')),
-            QrListCard(state: state, onEditProduct: () => _editProduct(context, state)),
-            if (state.hasList) ...[
-              ActionRow(
-                icon: Icons.archive_outlined,
-                iconBg: state.complete ? C.primaryContainer : C.high,
-                iconColor: state.complete ? Colors.white : C.primary,
-                title: 'Archive this list',
-                subtitle: state.complete ? 'Finished: move it and its scans to List history' : '${fmt(state.codeCount - state.printed)} codes left by scans. Move it to List history when done',
-                onTap: () => _archive(context, state),
-                standalone: true,
-              ),
+            SectionTitle('QR batches', icon: Icons.qr_code_2, upper: true, trailing: MicroLabel('${fmt(state.machineLists.fold<int>(0, (a, b) => a + b.scanCount))} scans')),
+            for (final batch in state.machineLists) ...[
+              QrListCard(batch: batch, onEditProduct: () => _editProduct(context, batch)),
+              if (batch.hasList)
+                ActionRow(
+                  icon: Icons.archive_outlined,
+                  iconBg: batch.complete ? C.primaryContainer : C.high,
+                  iconColor: batch.complete ? Colors.white : C.primary,
+                  title: 'Archive ${batch.machine.label} batch',
+                  subtitle: batch.complete ? 'Finished: move it and its scans to List history' : '${fmt(batch.codeCount - batch.printed)} codes left by scans',
+                  onTap: () => _archive(context, batch),
+                  standalone: true,
+                ),
               SizedBox(height: 12.r),
             ],
             ActionRow(
               icon: Icons.cloud_upload_outlined,
               iconBg: C.primaryContainer,
               iconColor: Colors.white,
-              title: state.hasList ? 'Replace with new file' : 'Import CSV / Excel',
-              subtitle: '.csv, .txt or .xlsx — one column, in print order',
+              title: state.hasAnyList ? 'Import or replace a machine batch' : 'Import CSV / Excel',
+              subtitle: 'Choose Laser 1 or Laser 2 after selecting the file',
               busy: state.busy,
               onTap: state.busy ? null : () => _import(context),
               standalone: true,
